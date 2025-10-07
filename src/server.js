@@ -43,20 +43,20 @@ app.use(helmet());
 app.use(morgan("dev"));
 
 /* ------------------------------------------------------------------
-   ✅ CORS Configuration
+   ✅ Global CORS Configuration
 ------------------------------------------------------------------ */
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow tools without origin header (Postman, curl, etc.)
+      // Allow tools without origin (Postman, curl, etc.)
       if (!origin) return callback(null, true);
 
-      // Allow localhost:* automatically for dev
+      // Allow all localhost ports
       if (/^http:\/\/localhost(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
 
-      // Check against list
+      // Check against allowed list
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -70,8 +70,8 @@ app.use(
   })
 );
 
-// ✅ Pre-flight requests
-app.options("*", cors());
+// ⚠️ Removed app.options("*", cors()) because Express 5 + path-to-regexp crashes on "*"
+// The global app.use(cors()) above already handles OPTIONS preflight requests.
 
 /* ------------------------------------------------------------------
    ✅ Routes
@@ -83,7 +83,9 @@ app.use("/api/bets", betRoutes);
 app.use("/api/wallet", walletRoutes);
 
 // Health check
-app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.get("/api/health", (req, res) =>
+  res.json({ ok: true, message: "TOSS backend running ✅" })
+);
 
 // Global error handler
 app.use(errorHandler);
