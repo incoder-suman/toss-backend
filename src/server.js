@@ -48,19 +48,9 @@ app.use(morgan("dev"));
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow tools without origin (Postman, curl, etc.)
-      if (!origin) return callback(null, true);
-
-      // Allow all localhost ports
-      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) {
-        return callback(null, true);
-      }
-
-      // Check against allowed list
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
+      if (!origin) return callback(null, true); // Allow Postman / curl
+      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
       console.error(`❌ CORS blocked for origin: ${origin}`);
       return callback(new Error(`CORS not allowed for ${origin}`));
     },
@@ -70,8 +60,19 @@ app.use(
   })
 );
 
-// ⚠️ Removed app.options("*", cors()) because Express 5 + path-to-regexp crashes on "*"
-// The global app.use(cors()) above already handles OPTIONS preflight requests.
+/* ------------------------------------------------------------------
+   ✅ Fix: Handle all OPTIONS (preflight) requests manually
+------------------------------------------------------------------ */
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+    res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.header("Access-Control-Allow-Credentials", "true");
+    return res.status(204).send(); // 204 = No Content, but success
+  }
+  next();
+});
 
 /* ------------------------------------------------------------------
    ✅ Routes
