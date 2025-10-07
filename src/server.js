@@ -16,13 +16,24 @@ import walletRoutes from "./routes/walletRoutes.js";
 
 const app = express();
 
-// ✅ Allowed origins from .env or default localhost:5173
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173")
+// ✅ Allowed origins from .env or default list
+const defaultOrigins = [
+  "http://localhost:5173",                 // local frontend
+  "http://localhost:5174",                 // local admin
+  "https://toss-frontend-nine.vercel.app", // live frontend
+  "https://toss-admin.vercel.app",         // live admin
+];
+
+const allowedOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((o) => o.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .concat(defaultOrigins);
 
-console.log("✅ Allowed Origins:", allowedOrigins);
+// ✅ Remove duplicates
+const uniqueOrigins = [...new Set(allowedOrigins)];
+
+console.log("✅ Allowed Origins:", uniqueOrigins);
 
 // Middleware
 app.use(express.json());
@@ -33,15 +44,16 @@ app.use(morgan("dev"));
 app.use(
   cors({
     origin: function (origin, callback) {
+      // ⚙️ Allow requests without origin (Postman, mobile apps, curl, etc.)
       if (!origin) return callback(null, true);
 
-      // ✅ Allow any localhost port (5173, 5174, etc.)
+      // ⚙️ Allow all localhost ports dynamically (useful for dev)
       if (/^http:\/\/localhost(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
 
-      // ✅ Otherwise check against allowedOrigins list
-      if (allowedOrigins.includes(origin)) {
+      // ⚙️ Check against allowed list
+      if (uniqueOrigins.includes(origin)) {
         return callback(null, true);
       }
 
@@ -54,9 +66,8 @@ app.use(
   })
 );
 
-
-// ✅ Handle all preflight requests (very important)
-app.options(/.*/, cors());
+// ✅ Handle all preflight requests globally
+app.options("*", cors());
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -65,15 +76,14 @@ app.use("/api/matches", matchRoutes);
 app.use("/api/bets", betRoutes);
 app.use("/api/wallet", walletRoutes);
 
-// Health check
+// Health check route
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 // Error handler
 app.use(errorHandler);
 
-// Start server
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
-
 connectDB(process.env.MONGO_URI).then(() => {
   app.listen(PORT, () =>
     console.log(`🚀 Server running on http://localhost:${PORT}`)
