@@ -5,7 +5,7 @@ import Transaction from "../models/Transaction.js";
 
 /**
  * 🏏 Create new match (admin)
- * Automatically sets team odds like {"India":1.9,"Australia":1.9}
+ * Automatically sets team odds like {"India":1.98,"Australia":1.98}
  */
 export const createMatch = async (req, res, next) => {
   try {
@@ -14,8 +14,8 @@ export const createMatch = async (req, res, next) => {
 
     const oddsMap = {};
     if (teams.length === 2) {
-      oddsMap[teams[0]] = 1.9;
-      oddsMap[teams[1]] = 1.9;
+      oddsMap[teams[0]] = 1.98;
+      oddsMap[teams[1]] = 1.98;
     }
 
     const match = await Match.create({
@@ -92,7 +92,7 @@ export const updateMatchStatus = async (req, res, next) => {
 };
 
 /**
- * 🎯 Declare result & settle bets
+ * 🎯 Declare result & settle bets (case-insensitive)
  */
 export const setResult = async (req, res, next) => {
   try {
@@ -103,8 +103,11 @@ export const setResult = async (req, res, next) => {
     if (match.status === "COMPLETED")
       return res.status(400).json({ message: "Match already completed" });
 
+    // 🧾 Normalize result text (to lowercase)
+    const normalizedResult = (result || "").trim().toLowerCase();
+
     // 🧾 Update match result
-    match.result = result;
+    match.result = result.trim();
     match.status = "COMPLETED";
     await match.save();
 
@@ -116,7 +119,10 @@ export const setResult = async (req, res, next) => {
       const user = await User.findById(bet.user);
       if (!user) continue;
 
-      if (bet.side === result) {
+      // ✅ Normalize both for case-insensitive match
+      const betSide = (bet.side || "").trim().toLowerCase();
+
+      if (betSide === normalizedResult) {
         // ✅ Bet WON
         bet.status = "WON";
         await bet.save();
