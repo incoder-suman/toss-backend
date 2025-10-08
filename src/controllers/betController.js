@@ -4,15 +4,20 @@ import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 
 /* -------------------------------------------------------
- 🎯 PLACE BET CONTROLLER
+ 🎯 PLACE BET CONTROLLER  (1.98x odds)
 ------------------------------------------------------- */
 export const placeBet = async (req, res, next) => {
   try {
     const { matchId, side, stake } = req.body;
     const userId = req.user?.id;
 
-    if (!matchId || !side || !stake) {
+    if (!matchId || !side || stake == null) {
       return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const stakeAmount = Number(stake);
+    if (isNaN(stakeAmount) || stakeAmount <= 0) {
+      return res.status(400).json({ message: "Invalid stake amount" });
     }
 
     // 1️⃣ Find the match
@@ -24,12 +29,12 @@ export const placeBet = async (req, res, next) => {
       return res.status(400).json({ message: "Betting closed for this match" });
     }
 
-    // 2️⃣ Extract teams
+    // 2️⃣ Extract teams and normalize side
     const [teamA, teamB] = (match.title || "")
       .split(/vs/i)
       .map((s) => s.trim().toLowerCase());
 
-    const sideNormalized = side.trim().toLowerCase();
+    const sideNormalized = (side || "").trim().toLowerCase();
     if (![teamA, teamB].includes(sideNormalized)) {
       return res
         .status(400)
@@ -42,39 +47,40 @@ export const placeBet = async (req, res, next) => {
     if (user.isBlocked)
       return res.status(403).json({ message: "User is blocked" });
 
-    const walletBalance = user.walletBalance || 0;
-    if (walletBalance < stake)
+    const walletBalance = Number(user.walletBalance || 0);
+    if (walletBalance < stakeAmount)
       return res.status(400).json({ message: "Insufficient wallet balance" });
 
     // 4️⃣ Deduct stake
-    user.walletBalance = walletBalance - stake;
+    user.walletBalance = walletBalance - stakeAmount;
     await user.save();
 
-    // 5️⃣ Record transaction
+    // 5️⃣ Record debit transaction
     await Transaction.create({
       user: user._id,
       type: "BET_STAKE",
-      amount: -stake,
-      meta: { matchId, side },
+      amount: -stakeAmount,
+      meta: { matchId, side: sideNormalized },
       balanceAfter: user.walletBalance,
     });
 
-    // 6️⃣ Create bet record
+    // 6️⃣ Calculate odds and potential win
     const odds = 1.98;
-    const potentialWin = Number((stake * odds).toFixed(2));
+    const potentialWin = Number((stakeAmount * odds).toFixed(2));
 
+    // 7️⃣ Create bet record
     const bet = await Bet.create({
       user: user._id,
       match: match._id,
       side: sideNormalized,
-      stake,
+      stake: stakeAmount,
       potentialWin,
       status: "PENDING",
     });
 
-    // 7️⃣ Send response
+    // 8️⃣ Send response
     res.status(201).json({
-      message: "Bet placed successfully",
+      message: "✅ Bet placed successfully",
       bet,
       currentBalance: user.walletBalance,
     });
@@ -139,13 +145,12 @@ export const tossHistory = async (req, res, next) => {
     if (!userId)
       return res.status(401).json({ message: "Unauthorized user" });
 
-    // find bets whose match is finished
     const bets = await Bet.find({ user: userId })
       .populate("match", "title status result")
       .sort({ createdAt: -1 });
 
     const completed = bets.filter(
-      (b) => b.match && b.match.status === "FINISHED"
+      (b) => b.match && b.match.status === "COMPLETED"
     );
 
     res.json(completed);
