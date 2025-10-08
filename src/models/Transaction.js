@@ -1,4 +1,3 @@
-// backend/models/Transaction.js
 import mongoose from "mongoose";
 
 const txnSchema = new mongoose.Schema(
@@ -23,10 +22,10 @@ const txnSchema = new mongoose.Schema(
       required: true,
     },
 
+    // 🧾 amount can be positive (credit) or negative (debit)
     amount: {
       type: Number,
       required: true,
-      min: 0,
     },
 
     meta: {
@@ -42,7 +41,7 @@ const txnSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ✅ Defensive fallback: auto-lowercase unknown type to safe log
+// ✅ Defensive fallback
 txnSchema.pre("validate", function (next) {
   const allowed = [
     "DEPOSIT",
@@ -55,7 +54,7 @@ txnSchema.pre("validate", function (next) {
   ];
   if (!allowed.includes(this.type)) {
     console.warn(`⚠️ Unknown transaction type "${this.type}", forcing to "REVERSAL"`);
-    this.type = "REVERSAL"; // prevent crash in case of typo
+    this.type = "REVERSAL";
   }
   next();
 });

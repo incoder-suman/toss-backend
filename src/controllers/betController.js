@@ -60,7 +60,7 @@ export const placeBet = async (req, res, next) => {
     });
 
     // 6️⃣ Create bet record
-    const odds = 1.9;
+    const odds = 1.98;
     const potentialWin = Number((stake * odds).toFixed(2));
 
     const bet = await Bet.create({
