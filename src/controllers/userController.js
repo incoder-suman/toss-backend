@@ -73,13 +73,10 @@ export const createUser = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
 
-    if (!name || !password) {
-      return res
-        .status(400)
-        .json({ message: "Name and password are required" });
-    }
+    if (!name || !password)
+      return res.status(400).json({ message: "Name and password are required" });
 
-    // If email blank or invalid — auto-generate unique email
+    // If email blank — auto-generate dummy email
     const safeEmail =
       email && email.trim() !== ""
         ? email.trim()
@@ -104,7 +101,7 @@ export const createUser = async (req, res, next) => {
     res.status(201).json({
       message: "✅ User created successfully",
       user: {
-        id: user._id,
+        _id: user._id,
         name: user.name,
         email: user.email,
         walletBalance: user.walletBalance,
@@ -125,9 +122,8 @@ export const addTokens = async (req, res, next) => {
     const { userId, amount } = req.body;
     const adminId = req.user?.id;
 
-    if (!userId || !amount || isNaN(amount) || amount <= 0) {
+    if (!userId || !amount || isNaN(amount) || amount <= 0)
       return res.status(400).json({ message: "Invalid amount" });
-    }
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -161,28 +157,22 @@ export const withdrawTokens = async (req, res, next) => {
     const { userId, amount } = req.body;
     const adminId = req.user?.id;
 
-    if (!userId || !amount || isNaN(amount) || amount <= 0) {
+    if (!userId || !amount || isNaN(amount) || amount <= 0)
       return res.status(400).json({ message: "Invalid amount" });
-    }
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.walletBalance < amount) {
-      return res
-        .status(400)
-        .json({ message: "Insufficient balance for withdrawal" });
-    }
+    if (user.walletBalance < amount)
+      return res.status(400).json({ message: "Insufficient balance" });
 
-    // Deduct balance
     user.walletBalance -= Number(amount);
     await user.save();
 
-    // Record transaction
     await Transaction.create({
       user: user._id,
       type: "ADMIN_DEBIT",
-      amount: Number(amount),
+      amount: -Number(amount), // ✅ negative for debit
       meta: { withdrawnBy: adminId },
       balanceAfter: user.walletBalance,
     });
@@ -193,6 +183,22 @@ export const withdrawTokens = async (req, res, next) => {
     });
   } catch (e) {
     console.error("❌ Error withdrawing tokens:", e);
+    next(e);
+  }
+};
+
+/**
+ * 📜 Get transaction history for a specific user
+ */
+export const getUserTransactions = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const transactions = await Transaction.find({ user: userId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.json({ transactions });
+  } catch (e) {
+    console.error("❌ Error fetching user transactions:", e);
     next(e);
   }
 };
