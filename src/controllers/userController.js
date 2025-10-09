@@ -67,42 +67,46 @@ export const unblockUser = async (req, res, next) => {
 
 /**
  * 🧍‍♂️ Create new user (admin only)
+ * Email optional (auto-generated if blank)
  */
 export const createUser = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
 
-    // Validation
-    if (!name || !email || !password) {
+    if (!name || !password) {
       return res
         .status(400)
-        .json({ message: "All fields (name, email, password) are required" });
+        .json({ message: "Name and password are required" });
     }
 
-    // 🛑 Check existing user
-    const exists = await User.findOne({ email });
+    // If email blank or invalid — auto-generate unique email
+    const safeEmail =
+      email && email.trim() !== ""
+        ? email.trim()
+        : `${Date.now()}_${Math.random().toString(36).substring(2, 8)}@example.com`;
+
+    // Check existing
+    const exists = await User.findOne({ email: safeEmail });
     if (exists)
       return res.status(400).json({ message: "Email already registered" });
 
-    // 🔒 Hash password before saving
+    // Hash password
     const hash = await bcrypt.hash(password, 10);
 
-    // ✅ Create new user
     const user = await User.create({
       name,
-      email,
-      password: hash, // store hashed password
+      email: safeEmail,
+      password: hash,
       role: "user",
       walletBalance: 0,
     });
 
-    return res.status(201).json({
-      message: "User created successfully",
+    res.status(201).json({
+      message: "✅ User created successfully",
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role,
         walletBalance: user.walletBalance,
         createdAt: user.createdAt,
       },
@@ -114,41 +118,81 @@ export const createUser = async (req, res, next) => {
 };
 
 /**
- * 💰 Add tokens (admin credit to user wallet)
+ * 💰 Add tokens (admin credit)
  */
 export const addTokens = async (req, res, next) => {
   try {
     const { userId, amount } = req.body;
-    const adminId = req.user.id;
+    const adminId = req.user?.id;
 
-    // 🧮 Validate amount
-    if (!amount || isNaN(amount) || amount <= 0) {
+    if (!userId || !amount || isNaN(amount) || amount <= 0) {
       return res.status(400).json({ message: "Invalid amount" });
     }
 
-    // 🧍 Find user
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // 💰 Update balance
     user.walletBalance += Number(amount);
     await user.save();
 
-    // 🧾 Record transaction
     await Transaction.create({
       user: user._id,
-      type: "ADMIN_CREDIT", // ✅ Make sure Transaction model supports this
+      type: "ADMIN_CREDIT",
       amount: Number(amount),
       meta: { addedBy: adminId },
       balanceAfter: user.walletBalance,
     });
 
-    return res.json({
-      message: "Tokens added successfully",
+    res.json({
+      message: "✅ Tokens added successfully",
       newBalance: user.walletBalance,
     });
   } catch (e) {
     console.error("❌ Error adding tokens:", e);
+    next(e);
+  }
+};
+
+/**
+ * 💸 Withdraw tokens (admin debit)
+ */
+export const withdrawTokens = async (req, res, next) => {
+  try {
+    const { userId, amount } = req.body;
+    const adminId = req.user?.id;
+
+    if (!userId || !amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.walletBalance < amount) {
+      return res
+        .status(400)
+        .json({ message: "Insufficient balance for withdrawal" });
+    }
+
+    // Deduct balance
+    user.walletBalance -= Number(amount);
+    await user.save();
+
+    // Record transaction
+    await Transaction.create({
+      user: user._id,
+      type: "ADMIN_DEBIT",
+      amount: Number(amount),
+      meta: { withdrawnBy: adminId },
+      balanceAfter: user.walletBalance,
+    });
+
+    res.json({
+      message: "✅ Tokens withdrawn successfully",
+      newBalance: user.walletBalance,
+    });
+  } catch (e) {
+    console.error("❌ Error withdrawing tokens:", e);
     next(e);
   }
 };

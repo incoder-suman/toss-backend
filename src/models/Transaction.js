@@ -15,9 +15,10 @@ const txnSchema = new mongoose.Schema(
         "WITHDRAW",       // user withdraw
         "BET_STAKE",      // user placed a bet
         "BET_WIN",        // user won a bet
-        "BET_LOST",       // ✅ added for lost bet settlement
+        "BET_LOST",       // user lost a bet
         "REVERSAL",       // optional reversal/refund
         "ADMIN_CREDIT",   // admin manually credited tokens
+        "ADMIN_DEBIT",    // ✅ admin manually debited tokens (withdraw)
       ],
       required: true,
     },
@@ -51,6 +52,7 @@ txnSchema.pre("validate", function (next) {
     "BET_LOST",
     "REVERSAL",
     "ADMIN_CREDIT",
+    "ADMIN_DEBIT", // ✅ include here too
   ];
   if (!allowed.includes(this.type)) {
     console.warn(`⚠️ Unknown transaction type "${this.type}", forcing to "REVERSAL"`);
