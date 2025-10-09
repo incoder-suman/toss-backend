@@ -9,7 +9,7 @@ export const getDashboardStats = async (req, res) => {
     const matches = await Match.countDocuments();
     const activeBets = await Bet.countDocuments({ status: "PENDING" });
 
-    // Calculate total revenue (sum of admin credits or system profit)
+    // calculate revenue
     const revenueAgg = await Transaction.aggregate([
       { $match: { type: "ADMIN_CREDIT" } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
