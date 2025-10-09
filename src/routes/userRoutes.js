@@ -7,24 +7,25 @@ import {
   addTokens,
   withdrawTokens,
   getUserTransactions,
-} from "../controller/userController.js"; // ✅ check your folder name — 'controller' not 'controllers'
+} from "../controllers/userController.js";  // ✅ FIXED PATH
+
 import { auth } from "../middleware/auth.js";
 
 const router = Router();
 
-// ✅ 1️⃣ List all users (Admin only)
+// ✅ 1️⃣ Get user list (admin)
 router.get("/", auth("admin"), listUsers);
 
-// ✅ 2️⃣ Create a new user (Admin only)
+// ✅ 2️⃣ Create user (admin)
 router.post("/", auth("admin"), createUser);
 
-// ✅ 3️⃣ Add tokens (Admin credit)
+// ✅ 3️⃣ Add tokens to user wallet (admin)
 router.post("/add-tokens", auth("admin"), addTokens);
 
-// ✅ 4️⃣ Withdraw tokens (Admin debit)
+// ✅ 4️⃣ Withdraw tokens (admin)
 router.post("/withdraw-tokens", auth("admin"), withdrawTokens);
 
-// ✅ 5️⃣ Get user transaction history
+// ✅ 5️⃣ Get transactions of user
 router.get("/transactions/:userId", auth("admin"), getUserTransactions);
 
 // ✅ 6️⃣ Block user
