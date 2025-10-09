@@ -5,23 +5,45 @@ import Transaction from "../models/Transaction.js";
 
 /**
  * 🏏 Create new match (admin)
- * Automatically sets team odds like {"India":1.98,"Australia":1.98}
+ * Automatically normalizes team names & sets odds 1.98x
  */
 export const createMatch = async (req, res, next) => {
   try {
     const { title, startAt } = req.body;
-    const teams = title.split(" vs ").map((t) => t.trim());
 
-    const oddsMap = {};
-    if (teams.length === 2) {
-      oddsMap[teams[0]] = 1.98;
-      oddsMap[teams[1]] = 1.98;
+    if (!title) {
+      return res.status(400).json({ message: "Title is required" });
     }
 
+    // ✅ Split and normalize team names
+    const teams = title
+      .split(/vs/i)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (teams.length !== 2) {
+      return res
+        .status(400)
+        .json({ message: "Please enter title as 'TeamA vs TeamB'" });
+    }
+
+    // ✅ Prepare short + full name pair
+    const normalizedTeams = teams.map((t) => ({
+      full: t,
+      short: t.slice(0, 3).toUpperCase(),
+    }));
+
+    // ✅ Odds map (short names)
+    const oddsMap = {
+      [normalizedTeams[0].short]: 1.98,
+      [normalizedTeams[1].short]: 1.98,
+    };
+
     const match = await Match.create({
-      title,
+      title: `${normalizedTeams[0].full} vs ${normalizedTeams[1].full}`,
       startAt,
       odds: oddsMap,
+      teams: normalizedTeams, // ✅ save both short & full names
       status: "UPCOMING",
     });
 
@@ -30,6 +52,7 @@ export const createMatch = async (req, res, next) => {
       match,
     });
   } catch (e) {
+    console.error("❌ Error creating match:", e);
     next(e);
   }
 };
@@ -92,22 +115,42 @@ export const updateMatchStatus = async (req, res, next) => {
 };
 
 /**
- * 🎯 Declare result & settle bets (case-insensitive)
+ * 🎯 Declare result & settle bets (supports short/full names)
  */
 export const setResult = async (req, res, next) => {
   try {
-    const { result } = req.body; // team name (like India / Australia)
+    const { result } = req.body;
     const match = await Match.findById(req.params.id);
 
     if (!match) return res.status(404).json({ message: "Match not found" });
     if (match.status === "COMPLETED")
       return res.status(400).json({ message: "Match already completed" });
 
-    // 🧾 Normalize result text (to lowercase)
+    // ✅ Normalize result
     const normalizedResult = (result || "").trim().toLowerCase();
 
-    // 🧾 Update match result
-    match.result = result.trim();
+    // ✅ Allow matching by short/full name
+    const teamNames = match.teams?.map((t) => ({
+      full: t.full.trim().toLowerCase(),
+      short: t.short.trim().toLowerCase(),
+    })) || [];
+
+    const matchedTeam = teamNames.find(
+      (t) =>
+        normalizedResult === t.full ||
+        normalizedResult === t.short ||
+        normalizedResult === t.full.slice(0, 3)
+    );
+
+    if (!matchedTeam) {
+      return res.status(400).json({
+        message: `Invalid team result. Must be one of: ${teamNames
+          .map((t) => `${t.full} (${t.short})`)
+          .join(", ")}`,
+      });
+    }
+
+    match.result = matchedTeam.full;
     match.status = "COMPLETED";
     await match.save();
 
@@ -119,11 +162,16 @@ export const setResult = async (req, res, next) => {
       const user = await User.findById(bet.user);
       if (!user) continue;
 
-      // ✅ Normalize both for case-insensitive match
       const betSide = (bet.side || "").trim().toLowerCase();
 
-      if (betSide === normalizedResult) {
-        // ✅ Bet WON
+      // ✅ Compare by short/full equivalence
+      const isWin =
+        betSide === matchedTeam.full ||
+        betSide === matchedTeam.short ||
+        betSide === matchedTeam.full.slice(0, 3);
+
+      if (isWin) {
+        // 🏆 Winner
         bet.status = "WON";
         await bet.save();
 
@@ -140,7 +188,7 @@ export const setResult = async (req, res, next) => {
         });
         winners++;
       } else {
-        // ❌ Bet LOST
+        // 💀 Loser
         bet.status = "LOST";
         await bet.save();
 
@@ -156,7 +204,7 @@ export const setResult = async (req, res, next) => {
     }
 
     res.json({
-      message: `✅ Result declared for ${match.title}: ${result}`,
+      message: `✅ Result declared for ${match.title}: ${matchedTeam.full}`,
       matchId: match._id,
       winners,
       losers,
