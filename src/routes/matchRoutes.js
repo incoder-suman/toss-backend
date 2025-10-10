@@ -10,19 +10,30 @@ import { auth } from "../middleware/auth.js";
 
 const router = Router();
 
-// Public — list all matches (frontend)
+/* ---------------------------------------------------------
+ 📍 PUBLIC ROUTES
+--------------------------------------------------------- */
+
+// 🧾 List all matches (frontend users)
 router.get("/", listMatches);
 
-// Admin — create new match
+/* ---------------------------------------------------------
+ 🛡️ ADMIN ROUTES (protected by auth middleware)
+--------------------------------------------------------- */
+
+// 🏏 Create a new match
 router.post("/", auth("admin"), createMatch);
 
-// Admin — update full match details (title, odds, etc)
+// 📝 Update match details (title, odds, etc.)
 router.put("/:id", auth("admin"), updateMatch);
 
-// Admin — change match status (UPCOMING / LIVE / COMPLETED / CANCELLED)
+// ⚙️ Update match status (UPCOMING / LIVE / COMPLETED / CANCELLED)
 router.put("/:id/status", auth("admin"), updateMatchStatus);
 
-// ✅ Admin — finalize match result + settle bets
+// 🏁 Finalize match result + settle bets (WIN / LOSS / DRAW)
 router.put("/:id/result", auth("admin"), setResult);
 
+/* ---------------------------------------------------------
+ ✅ EXPORT ROUTER
+--------------------------------------------------------- */
 export default router;

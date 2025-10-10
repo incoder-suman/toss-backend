@@ -4,6 +4,9 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import compression from "compression";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import { connectDB } from "./config/db.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -16,16 +19,20 @@ import matchRoutes from "./routes/matchRoutes.js";
 import betRoutes from "./routes/betRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 
+// Utilities for dirname (ESM)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 
 /* ------------------------------------------------------------------
-   ✅ Allowed Origins Setup
+   🌐 Allowed Origins Setup
 ------------------------------------------------------------------ */
 const defaultOrigins = [
-  "http://localhost:5173",                 // local frontend
-  "http://localhost:5174",                 // local admin
-  "https://toss-frontend-nine.vercel.app", // live frontend
-  "https://toss-admin.vercel.app",         // live admin
+  "http://localhost:5173",                 // Local frontend (User)
+  "http://localhost:5174",                 // Local admin
+  "https://toss-frontend-nine.vercel.app", // Deployed frontend
+  "https://toss-admin.vercel.app",         // Deployed admin
 ];
 
 const envOrigins = (process.env.CORS_ORIGIN || "")
@@ -37,14 +44,17 @@ const allowedOrigins = [...new Set([...defaultOrigins, ...envOrigins])];
 console.log("✅ Allowed Origins:", allowedOrigins);
 
 /* ------------------------------------------------------------------
-   ✅ Middlewares
+   🧩 Core Middlewares
 ------------------------------------------------------------------ */
-app.use(express.json());
+app.set("trust proxy", 1); // Render / reverse proxy safety
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(helmet());
 app.use(morgan("dev"));
+app.use(compression());
 
 /* ------------------------------------------------------------------
-   ✅ Global CORS Configuration
+   🛡️ Global CORS Configuration
 ------------------------------------------------------------------ */
 app.use(
   cors({
@@ -52,7 +62,7 @@ app.use(
       if (!origin) return callback(null, true); // Allow Postman / curl
       if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      console.error(`❌ CORS blocked for origin: ${origin}`);
+      console.warn(`❌ CORS blocked for origin: ${origin}`);
       return callback(new Error(`CORS not allowed for ${origin}`));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -62,7 +72,7 @@ app.use(
 );
 
 /* ------------------------------------------------------------------
-   ✅ Fix: Handle all OPTIONS (preflight) requests manually
+   ⚙️ Handle Preflight (OPTIONS) Requests
 ------------------------------------------------------------------ */
 app.use((req, res, next) => {
   if (req.method === "OPTIONS") {
@@ -70,13 +80,13 @@ app.use((req, res, next) => {
     res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.header("Access-Control-Allow-Credentials", "true");
-    return res.status(204).send(); // 204 = No Content, but success
+    return res.status(204).send(); // success but no body
   }
   next();
 });
 
 /* ------------------------------------------------------------------
-   ✅ Routes
+   🚏 API Routes
 ------------------------------------------------------------------ */
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -85,27 +95,42 @@ app.use("/api/bets", betRoutes);
 app.use("/api/wallet", walletRoutes);
 app.use("/api/admin", adminRoutes);
 
-// Health check
+/* ------------------------------------------------------------------
+   ❤️ Health Check Endpoint
+------------------------------------------------------------------ */
 app.get("/api/health", (req, res) =>
-  res.json({ ok: true, message: "TOSS backend running ✅" })
+  res.json({
+    ok: true,
+    uptime: process.uptime(),
+    message: "TOSS backend running ✅",
+    timestamp: new Date().toISOString(),
+  })
 );
 
-// Global error handler
+/* ------------------------------------------------------------------
+   🧱 Serve Static (Optional for uploads / assets)
+------------------------------------------------------------------ */
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+/* ------------------------------------------------------------------
+   ⚠️ Global Error Handler
+------------------------------------------------------------------ */
 app.use(errorHandler);
 
 /* ------------------------------------------------------------------
-   ✅ Start Server
+   🚀 Start Server
 ------------------------------------------------------------------ */
 const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI;
 
 (async () => {
   try {
-    await connectDB(process.env.MONGO_URI);
-    app.listen(PORT, () =>
-      console.log(`🚀 Server running successfully on port ${PORT}`)
-    );
+    await connectDB(MONGO_URI);
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running successfully on port ${PORT}`);
+    });
   } catch (err) {
-    console.error("❌ Failed to start server:", err);
+    console.error("❌ Failed to start server:", err.message);
     process.exit(1);
   }
 })();
