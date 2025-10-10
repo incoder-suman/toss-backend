@@ -1,24 +1,34 @@
+// ✅ src/routes/betRoutes.js
 import { Router } from "express";
 import {
   placeBet,
   listBets,
   myBets,
-  tossHistory, // ✅ include toss history controller
+  tossHistory,
 } from "../controllers/betController.js";
 import { auth } from "../middleware/auth.js";
 
 const router = Router();
 
-// 🎯 Place a new bet (accessible by user/admin)
-router.post("/", auth(["user", "admin"]), placeBet);
+/**
+ * 🎯 Place a new bet
+ * Access: user or admin
+ */
+router.post("/", auth("user"), placeBet);
 
-// 👤 Get all bets of logged-in user
-router.get("/me", auth(["user", "admin"]), myBets);
+/**
+ * 👤 Get all bets of logged-in user
+ */
+router.get("/me", auth("user"), myBets);
 
-// 🕹️ Get toss history (completed matches only)
-router.get("/history", auth(["user", "admin"]), tossHistory);
+/**
+ * 🕹️ Toss history (completed matches only)
+ */
+router.get("/history", auth("user"), tossHistory);
 
-// 🧾 Get all bets (admin only)
+/**
+ * 🧾 Admin: List all bets
+ */
 router.get("/", auth("admin"), listBets);
 
 export default router;
