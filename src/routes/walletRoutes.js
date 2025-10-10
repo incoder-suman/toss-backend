@@ -9,27 +9,44 @@ import User from "../models/User.js";
 
 const router = Router();
 
-// 💰 Admin can manually deposit/withdraw tokens for users
+/* ---------------------------------------------------------
+ 💰 ADMIN: Deposit tokens to user wallet
+--------------------------------------------------------- */
 router.post("/deposit", auth("admin"), deposit);
+
+/* ---------------------------------------------------------
+ 💸 ADMIN: Withdraw tokens from user wallet
+--------------------------------------------------------- */
 router.post("/withdraw", auth("admin"), withdraw);
 
-// 🧾 Fetch all wallet transactions
+/* ---------------------------------------------------------
+ 🧾 USER/ADMIN: Get all transactions for logged-in user
+--------------------------------------------------------- */
 router.get("/transactions", auth(["user", "admin"]), transactions);
 
-// 👇 ✅ NEW: Get current logged-in user's wallet balance
+/* ---------------------------------------------------------
+ 💼 USER/ADMIN: Get current wallet balance
+--------------------------------------------------------- */
 router.get("/balance", auth(["user", "admin"]), async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).select("walletBalance name email");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({
-      walletBalance: user.walletBalance,
-      currency: "INR", // base currency
+    return res.json({
+      success: true,
+      walletBalance: user.walletBalance || 0,
+      currency: "INR",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
     });
-  } catch (e) {
-    next(e);
+  } catch (error) {
+    console.error("❌ Error fetching wallet balance:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
