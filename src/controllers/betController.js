@@ -200,16 +200,31 @@ export const myBets = async (req, res, next) => {
 export const tossHistory = async (req, res, next) => {
   try {
     const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ message: "Unauthorized user" });
+    if (!userId)
+      return res.status(401).json({ message: "Unauthorized user" });
 
+    // ✅ Fetch all bets of the user
     const bets = await Bet.find({ user: userId })
       .populate("match", "title status result")
       .sort({ createdAt: -1 });
 
-    const completed = bets.filter((b) => b.match && b.match.status === "COMPLETED");
-    res.json(completed);
+    // ✅ Mark as "completed" if:
+    // - Match has a result, OR
+    // - Match status is "completed" (any case), OR
+    // - Match status is "finished" / "result_declared"
+    const completed = bets.filter(
+      (b) =>
+        b.match &&
+        (b.match.result ||
+          ["completed", "finished", "result_declared", "closed"].includes(
+            String(b.match.status).toLowerCase()
+          ))
+    );
+
+    // ✅ Respond with filtered list
+    res.status(200).json(completed);
   } catch (err) {
     console.error("❌ tossHistory error:", err);
-    next(err);
+    res.status(500).json({ message: err.message });
   }
 };
