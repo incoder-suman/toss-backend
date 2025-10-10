@@ -4,158 +4,143 @@ import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 
 /* -------------------------------------------------------
- 🎯 PLACE BET CONTROLLER  (1.98x odds)
+ 🎯 PLACE BET CONTROLLER (robust: min/max, atomic wallet, short/full)
 ------------------------------------------------------- */
 export const placeBet = async (req, res, next) => {
   try {
     const { matchId, side, stake } = req.body;
     const userId = req.user?.id;
 
-    if (!matchId || !side || stake == null) {
+    // 0) Basic validations
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+    if (!matchId || !side || stake == null)
       return res.status(400).json({ message: "Missing required fields" });
-    }
 
     const stakeAmount = Number(stake);
-    if (isNaN(stakeAmount) || stakeAmount <= 0) {
+    if (!Number.isFinite(stakeAmount) || stakeAmount <= 0)
       return res.status(400).json({ message: "Invalid stake amount" });
-    }
 
-    // 1️⃣ Find the match
+    // 1) Match validations
     const match = await Match.findById(matchId);
     if (!match) return res.status(404).json({ message: "Match not found" });
 
-    const matchStatus = (match.status || "").toUpperCase();
-    if (!["UPCOMING", "LIVE"].includes(matchStatus)) {
+    const status = String(match.status || "").toUpperCase();
+    if (!["UPCOMING", "LIVE"].includes(status))
       return res.status(400).json({ message: "Betting closed for this match" });
-    }
 
-    // 2️⃣ Extract teams and normalize side
-    const [teamA, teamB] = (match.title || "")
-      .split(/vs/i)
-      .map((s) => s.trim().toLowerCase());
-
-    const sideNormalized = (side || "").trim().toLowerCase();
-    if (![teamA, teamB].includes(sideNormalized)) {
+    // Enforce min/max if present on match
+    if (typeof match.minBet === "number" && stakeAmount < match.minBet) {
       return res
         .status(400)
-        .json({ message: `Invalid side selected. Valid: ${teamA}, ${teamB}` });
+        .json({ message: `Minimum bet is ₹${match.minBet}` });
+    }
+    if (typeof match.maxBet === "number" && stakeAmount > match.maxBet) {
+      return res
+        .status(400)
+        .json({ message: `Maximum bet is ₹${match.maxBet}` });
     }
 
-    // 3️⃣ Validate user and wallet
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-    if (user.isBlocked)
-      return res.status(403).json({ message: "User is blocked" });
+    // 2) Normalize side (supports full/short)
+    const sideNormalized = String(side || "").trim().toLowerCase();
 
-    const walletBalance = Number(user.walletBalance || 0);
-    if (walletBalance < stakeAmount)
-      return res.status(400).json({ message: "Insufficient wallet balance" });
+    // Prefer canonical teams array if present
+    let teamFullA, teamFullB, teamShortA, teamShortB;
 
-    // 4️⃣ Deduct stake
-    user.walletBalance = walletBalance - stakeAmount;
-    await user.save();
+    if (Array.isArray(match.teams) && match.teams.length === 2) {
+      teamFullA = match.teams[0].full?.trim().toLowerCase();
+      teamShortA = match.teams[0].short?.trim().toLowerCase();
+      teamFullB = match.teams[1].full?.trim().toLowerCase();
+      teamShortB = match.teams[1].short?.trim().toLowerCase();
+    } else {
+      // Fallback to title split
+      const [a, b] = String(match.title || "")
+        .split(/vs/i)
+        .map((s) => s.trim().toLowerCase());
+      teamFullA = a;
+      teamFullB = b;
+      teamShortA = a?.slice(0, 3);
+      teamShortB = b?.slice(0, 3);
+    }
 
-    // 5️⃣ Record debit transaction
+    const matchSide = (candidate) => {
+      const c = candidate?.toLowerCase();
+      return (
+        c === teamFullA ||
+        c === teamShortA ||
+        c === teamFullA?.slice(0, 3) ||
+        c === teamFullB ||
+        c === teamShortB ||
+        c === teamFullB?.slice(0, 3)
+      );
+    };
+
+    if (!matchSide(sideNormalized)) {
+      return res.status(400).json({
+        message: `Invalid side. Valid: ${[teamFullA, teamFullB]
+          .filter(Boolean)
+          .map((f, i) => `${f.toUpperCase()} (${i === 0 ? teamShortA?.toUpperCase() : teamShortB?.toUpperCase()})`)
+          .join(" or ")}`,
+      });
+    }
+
+    // Canonicalize to the matched team's SHORT code (useful for odds lookup)
+    const picked =
+      sideNormalized === teamFullA ||
+      sideNormalized === teamShortA ||
+      sideNormalized === teamFullA?.slice(0, 3)
+        ? { full: teamFullA, short: (teamShortA || teamFullA?.slice(0, 3) || "").toUpperCase() }
+        : { full: teamFullB, short: (teamShortB || teamFullB?.slice(0, 3) || "").toUpperCase() };
+
+    // 3) Atomic wallet deduction to avoid double-spend
+    // This updates only if balance >= stakeAmount
+    const userAfter = await User.findOneAndUpdate(
+      { _id: userId, isBlocked: { $ne: true }, walletBalance: { $gte: stakeAmount } },
+      { $inc: { walletBalance: -stakeAmount } },
+      { new: true }
+    );
+
+    if (!userAfter)
+      return res
+        .status(400)
+        .json({ message: "Insufficient wallet balance or user blocked" });
+
+    // 4) Record transaction (debit)
     await Transaction.create({
-      user: user._id,
+      user: userAfter._id,
       type: "BET_STAKE",
       amount: -stakeAmount,
-      meta: { matchId, side: sideNormalized },
-      balanceAfter: user.walletBalance,
+      meta: { matchId, side: picked.short || sideNormalized },
+      balanceAfter: userAfter.walletBalance,
     });
 
-    // 6️⃣ Calculate odds and potential win
-    const odds = 1.98;
-    const potentialWin = Number((stakeAmount * odds).toFixed(2));
+    // 5) Resolve odds: prefer odds by SHORT key, else by full, else default 1.98
+    const odds =
+      match.odds?.[picked.short] ??
+      match.odds?.[picked.full] ??
+      match.odds?.[picked.short?.toLowerCase?.()] ??
+      1.98;
 
-    // 7️⃣ Create bet record
+    const potentialWin = Math.round(stakeAmount * Number(odds) * 100) / 100;
+
+    // 6) Create bet
     const bet = await Bet.create({
-      user: user._id,
+      user: userAfter._id,
       match: match._id,
-      side: sideNormalized,
+      side: picked.short ? picked.short.toLowerCase() : sideNormalized, // store consistent
       stake: stakeAmount,
       potentialWin,
       status: "PENDING",
     });
 
-    // 8️⃣ Send response
-    res.status(201).json({
+    // 7) Success
+    return res.status(201).json({
       message: "✅ Bet placed successfully",
       bet,
-      currentBalance: user.walletBalance,
+      walletBalance: userAfter.walletBalance, // keep both keys for older UI
+      currentBalance: userAfter.walletBalance,
     });
-  } catch (e) {
-    console.error("❌ Bet placement error:", e);
-    next(e);
-  }
-};
-
-/* -------------------------------------------------------
- 📜 LIST ALL BETS (ADMIN)
-------------------------------------------------------- */
-export const listBets = async (req, res, next) => {
-  try {
-    const { page = 1, limit = 20, userId, matchId, status } = req.query;
-    const filter = {};
-    if (userId) filter.user = userId;
-    if (matchId) filter.match = matchId;
-    if (status) filter.status = status;
-
-    const bets = await Bet.find(filter)
-      .populate("user", "name email")
-      .populate("match", "title startAt status result")
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(Number(limit));
-
-    const total = await Bet.countDocuments(filter);
-    res.json({ bets, total });
-  } catch (e) {
-    console.error("❌ listBets error:", e);
-    next(e);
-  }
-};
-
-/* -------------------------------------------------------
- 👤 MY BETS (LOGGED-IN USER)
-------------------------------------------------------- */
-export const myBets = async (req, res, next) => {
-  try {
-    const userId = req.user?.id;
-    if (!userId)
-      return res.status(401).json({ message: "Unauthorized user" });
-
-    const bets = await Bet.find({ user: userId })
-      .populate("match", "title startAt status result")
-      .sort({ createdAt: -1 });
-
-    res.json(bets);
   } catch (err) {
-    console.error("❌ myBets error:", err);
-    next(err);
-  }
-};
-
-/* -------------------------------------------------------
- 🕹️ USER TOSS HISTORY (COMPLETED MATCHES)
-------------------------------------------------------- */
-export const tossHistory = async (req, res, next) => {
-  try {
-    const userId = req.user?.id;
-    if (!userId)
-      return res.status(401).json({ message: "Unauthorized user" });
-
-    const bets = await Bet.find({ user: userId })
-      .populate("match", "title status result")
-      .sort({ createdAt: -1 });
-
-    const completed = bets.filter(
-      (b) => b.match && b.match.status === "COMPLETED"
-    );
-
-    res.json(completed);
-  } catch (err) {
-    console.error("❌ tossHistory error:", err);
+    console.error("❌ Bet placement error:", err);
     next(err);
   }
 };

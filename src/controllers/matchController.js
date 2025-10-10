@@ -4,16 +4,14 @@ import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 
 /**
- * 🏏 Create new match (admin)
- * Automatically normalizes team names & sets odds 1.98x
+ * 🏏 CREATE MATCH (Admin)
+ * Automatically sets short names + default odds 1.98x
  */
 export const createMatch = async (req, res, next) => {
   try {
     const { title, startAt } = req.body;
-
     if (!title) return res.status(400).json({ message: "Title is required" });
 
-    // ✅ Split & normalize teams
     const teams = title
       .split(/vs/i)
       .map((t) => t.trim())
@@ -25,7 +23,6 @@ export const createMatch = async (req, res, next) => {
         .json({ message: "Please enter title as 'TeamA vs TeamB'" });
     }
 
-    // ✅ Create short/full pair
     const normalizedTeams = teams.map((t) => ({
       full: t,
       short: t.slice(0, 3).toUpperCase(),
@@ -42,20 +39,21 @@ export const createMatch = async (req, res, next) => {
       odds: oddsMap,
       teams: normalizedTeams,
       status: "UPCOMING",
+      result: "PENDING",
     });
 
     res.status(201).json({
       message: "✅ Match created successfully",
       match,
     });
-  } catch (e) {
-    console.error("❌ Error creating match:", e);
-    next(e);
+  } catch (err) {
+    console.error("❌ createMatch error:", err);
+    next(err);
   }
 };
 
 /**
- * 📋 List matches
+ * 📋 LIST MATCHES
  */
 export const listMatches = async (req, res, next) => {
   try {
@@ -63,13 +61,13 @@ export const listMatches = async (req, res, next) => {
     const filter = status ? { status } : {};
     const matches = await Match.find(filter).sort({ startAt: -1 });
     res.json({ matches });
-  } catch (e) {
-    next(e);
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * ✏️ Update match details
+ * ✏️ UPDATE MATCH DETAILS
  */
 export const updateMatch = async (req, res, next) => {
   try {
@@ -78,106 +76,112 @@ export const updateMatch = async (req, res, next) => {
       runValidators: true,
     });
     if (!updated) return res.status(404).json({ message: "Match not found" });
-    res.json({ message: "Match updated successfully", match: updated });
-  } catch (e) {
-    next(e);
+    res.json({ message: "✅ Match updated", match: updated });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * ⚙️ Update match status (LIVE / LOCKED / COMPLETED)
+ * ⚙️ UPDATE MATCH STATUS
  */
 export const updateMatchStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
-    const validStatuses = [
-      "UPCOMING",
-      "LIVE",
-      "LOCKED",
-      "COMPLETED",
-      "CANCELLED",
-    ];
-
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: "Invalid status value" });
-    }
+    const valid = ["UPCOMING", "LIVE", "LOCKED", "COMPLETED", "CANCELLED"];
+    if (!valid.includes(status))
+      return res.status(400).json({ message: "Invalid status" });
 
     const match = await Match.findById(req.params.id);
     if (!match) return res.status(404).json({ message: "Match not found" });
 
     match.status = status;
-    if (["UPCOMING", "LIVE"].includes(status)) {
-      match.result = "PENDING";
-    }
-
+    if (["UPCOMING", "LIVE"].includes(status)) match.result = "PENDING";
     await match.save();
-    res.json({ message: `Match status updated to ${status}`, match });
-  } catch (e) {
-    next(e);
+
+    res.json({ message: `✅ Match status set to ${status}`, match });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * 🎯 Declare result & settle bets (supports DRAW + short/full names)
+ * 🎯 DECLARE RESULT (supports DRAW + refund)
  */
 export const setResult = async (req, res, next) => {
   try {
     const { result } = req.body;
     const match = await Match.findById(req.params.id);
-
     if (!match) return res.status(404).json({ message: "Match not found" });
+
     if (match.status === "COMPLETED")
       return res.status(400).json({ message: "Match already completed" });
 
     const normalizedResult = (result || "").trim().toLowerCase();
 
-    // ✅ Handle Draw / Abandoned
+    // 🟡 DRAW CASE — Refund all bets
     if (["draw", "abandoned", "no result"].includes(normalizedResult)) {
-      match.result = "DRAW";
       match.status = "COMPLETED";
+      match.result = "DRAW";
       await match.save();
+
+      const bets = await Bet.find({ match: match._id });
+      let refunded = 0;
+
+      for (const bet of bets) {
+        const user = await User.findById(bet.user);
+        if (!user) continue;
+
+        user.walletBalance += bet.stake;
+        await user.save();
+
+        bet.status = "REFUNDED";
+        await bet.save();
+
+        await Transaction.create({
+          user: user._id,
+          type: "REVERSAL",
+          amount: bet.stake,
+          meta: { matchId: match._id, betId: bet._id, reason: "DRAW" },
+          balanceAfter: user.walletBalance,
+        });
+        refunded++;
+      }
+
       return res.json({
-        message: `✅ Match declared as DRAW (no winners/losers).`,
+        message: `🤝 Match declared DRAW — ${refunded} refunds processed.`,
         matchId: match._id,
       });
     }
 
-    // ✅ Prepare team comparison map
+    // ✅ Team name validation
     const teamNames =
       match.teams?.map((t) => ({
         full: t.full.trim().toLowerCase(),
         short: t.short.trim().toLowerCase(),
       })) || [];
 
-    const matchedTeam = teamNames.find(
+    const matched = teamNames.find(
       (t) =>
         normalizedResult === t.full ||
         normalizedResult === t.short ||
         normalizedResult === t.full.slice(0, 3)
     );
 
-    if (!matchedTeam) {
+    if (!matched) {
       return res.status(400).json({
-        message: `Invalid team name. Valid options: ${teamNames
+        message: `Invalid result. Must be one of: ${teamNames
           .map((t) => `${t.full} (${t.short})`)
           .join(", ")}, or DRAW`,
       });
     }
 
-    // ✅ Save result
-    match.result = matchedTeam.full;
+    // ✅ Apply result & settle bets
+    match.result = matched.full;
     match.status = "COMPLETED";
     await match.save();
 
-    // ✅ Fetch bets
     const bets = await Bet.find({ match: match._id });
-    if (!bets.length) {
-      return res.json({
-        message: `✅ Result declared for ${match.title}: ${matchedTeam.full} (no bets found)`,
-        matchId: match._id,
-      });
-    }
-
     let winners = 0,
       losers = 0;
 
@@ -186,13 +190,13 @@ export const setResult = async (req, res, next) => {
       if (!user) continue;
 
       const betSide = (bet.side || "").trim().toLowerCase();
-
       const isWin =
-        betSide === matchedTeam.full ||
-        betSide === matchedTeam.short ||
-        betSide === matchedTeam.full.slice(0, 3);
+        betSide === matched.full ||
+        betSide === matched.short ||
+        betSide === matched.full.slice(0, 3);
 
       if (isWin) {
+        // ✅ WIN
         bet.status = "WON";
         await bet.save();
 
@@ -209,6 +213,7 @@ export const setResult = async (req, res, next) => {
         });
         winners++;
       } else {
+        // ❌ LOSS
         bet.status = "LOST";
         await bet.save();
 
@@ -224,13 +229,13 @@ export const setResult = async (req, res, next) => {
     }
 
     res.json({
-      message: `✅ Result declared for ${match.title}: ${matchedTeam.full}`,
+      message: `✅ Result declared for ${match.title}: ${matched.full}`,
       matchId: match._id,
       winners,
       losers,
     });
-  } catch (e) {
-    console.error("❌ Error in setResult:", e);
-    next(e);
+  } catch (err) {
+    console.error("❌ setResult error:", err);
+    next(err);
   }
 };
