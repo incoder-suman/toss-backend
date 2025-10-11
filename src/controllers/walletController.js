@@ -1,30 +1,37 @@
+// ✅ backend/src/controllers/walletController.js
 import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 
 /* -------------------------------------------------------
- 💰 DEPOSIT — (admin or system credit)
+ 🧩 Helper — Safe number parse
 ------------------------------------------------------- */
-export const deposit = async (req, res, next) => {
+const toNum = (v) => (isNaN(v) ? 0 : Number(v));
+
+/* -------------------------------------------------------
+ 💰 DEPOSIT — (Admin or System Credit)
+------------------------------------------------------- */
+export const deposit = async (req, res) => {
   try {
     const { userId, amount, note } = req.body;
-    const actorId = req.user?.id || null; // who triggered deposit
+    const actorId = req.user?.id || null;
 
-    if (!userId || !amount || isNaN(amount) || Number(amount) <= 0) {
-      return res.status(400).json({ success: false, message: "Invalid amount or user ID" });
+    if (!userId || toNum(amount) <= 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid userId or amount" });
     }
 
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user)
+      return res.status(404).json({ success: false, message: "User not found" });
 
-    // update wallet balance
-    user.walletBalance = (user.walletBalance || 0) + Number(amount);
+    user.walletBalance = toNum(user.walletBalance) + toNum(amount);
     await user.save();
 
-    // record transaction
     const txn = await Transaction.create({
       user: user._id,
       type: "DEPOSIT",
-      amount: Number(amount),
+      amount: toNum(amount),
       meta: { addedBy: actorId, note: note || "Manual deposit" },
       balanceAfter: user.walletBalance,
     });
@@ -37,38 +44,43 @@ export const deposit = async (req, res, next) => {
     });
   } catch (error) {
     console.error("❌ Deposit error:", error);
-    res.status(500).json({ success: false, message: "Server error", error: error.message });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
 /* -------------------------------------------------------
- 💸 WITHDRAW — (admin or system debit)
+ 💸 WITHDRAW — (Admin or System Debit)
 ------------------------------------------------------- */
-export const withdraw = async (req, res, next) => {
+export const withdraw = async (req, res) => {
   try {
     const { userId, amount, note } = req.body;
     const actorId = req.user?.id || null;
 
-    if (!userId || !amount || isNaN(amount) || Number(amount) <= 0) {
-      return res.status(400).json({ success: false, message: "Invalid amount or user ID" });
+    if (!userId || toNum(amount) <= 0) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid userId or amount" });
     }
 
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user)
+      return res.status(404).json({ success: false, message: "User not found" });
 
-    if ((user.walletBalance || 0) < Number(amount)) {
-      return res.status(400).json({ success: false, message: "Insufficient wallet balance" });
+    if (toNum(user.walletBalance) < toNum(amount)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Insufficient wallet balance" });
     }
 
-    // update wallet
-    user.walletBalance -= Number(amount);
+    user.walletBalance -= toNum(amount);
     await user.save();
 
-    // record transaction
     const txn = await Transaction.create({
       user: user._id,
       type: "WITHDRAW",
-      amount: -Number(amount),
+      amount: -toNum(amount),
       meta: { withdrawnBy: actorId, note: note || "Manual withdraw" },
       balanceAfter: user.walletBalance,
     });
@@ -81,14 +93,16 @@ export const withdraw = async (req, res, next) => {
     });
   } catch (error) {
     console.error("❌ Withdraw error:", error);
-    res.status(500).json({ success: false, message: "Server error", error: error.message });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
 /* -------------------------------------------------------
- 🧾 FETCH TRANSACTION HISTORY (user or admin)
+ 🧾 TRANSACTION HISTORY — (User or Admin)
 ------------------------------------------------------- */
-export const transactions = async (req, res, next) => {
+export const transactions = async (req, res) => {
   try {
     const userId = req.query.userId || req.user?.id;
     const page = parseInt(req.query.page) || 1;
@@ -113,6 +127,60 @@ export const transactions = async (req, res, next) => {
     });
   } catch (error) {
     console.error("❌ Transactions fetch error:", error);
-    res.status(500).json({ success: false, message: "Server error", error: error.message });
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+/* -------------------------------------------------------
+ 💼 WALLET BALANCE — (User or Admin)
+ Includes Exposure (active stakes)
+------------------------------------------------------- */
+export const getWalletBalance = async (req, res) => {
+  try {
+    const user = await User.findById(req.user?.id).select(
+      "walletBalance name email"
+    );
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Calculate current exposure (total active BET_STAKE)
+    const exposure = await Transaction.aggregate([
+      {
+        $match: {
+          user: user._id,
+          type: "BET_STAKE",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $abs: "$amount" } },
+        },
+      },
+    ]);
+
+    const expAmount = exposure[0]?.total || 0;
+
+    return res.status(200).json({
+      success: true,
+      walletBalance: toNum(user.walletBalance),
+      exposure: toNum(expAmount),
+      availableBalance: toNum(user.walletBalance) - toNum(expAmount),
+      currency: "INR",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (error) {
+    console.error("❌ getWalletBalance error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
