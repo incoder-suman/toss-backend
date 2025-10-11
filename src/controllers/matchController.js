@@ -238,18 +238,16 @@ export const publishOrUpdateResult = async (req, res) => {
       console.log(`🔄 Reversed previous settlements: ${reversed}`);
     }
 
-    /* 2️⃣ Apply new result & settle */
-    match.result = winner;
-    match.status = "RESULT_DECLARED";
+    /* 2️⃣ Apply the new result & settle */
+    match.result = winner;              // "DRAW" ya team (lowercase full)
+    match.status = "COMPLETED";         // ✅ enum-safe (RESULT_DECLARED nahi)
     await match.save();
 
     const bets = await Bet.find({ match: id, status: "PENDING" });
-    let wins = 0,
-      losses = 0,
-      refunds = 0;
+    let wins = 0, losses = 0, refunds = 0;
 
     for (const b of bets) {
-      if (!b || (!b.team && !b.side)) continue; // skip corrupted data
+      if (!b || (!b.team && !b.side)) continue; // guard
       const user = await User.findById(b.user);
       if (!user) continue;
 
@@ -270,8 +268,8 @@ export const publishOrUpdateResult = async (req, res) => {
           balanceAfter: user.walletBalance,
         });
       } else {
-        const betTeam = norm(b.team || b.side || "");
-        if (betTeam === norm(winner)) {
+        const betTeam = norm(b.team ?? b.side ?? "");
+        if (betTeam && betTeam === norm(winner)) {
           const credit = b.potentialWin || 0;
           user.walletBalance += credit;
           b.status = "WON";

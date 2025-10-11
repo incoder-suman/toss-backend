@@ -1,13 +1,22 @@
 // ✅ backend/src/models/Match.js
 import mongoose from "mongoose";
 
+/* -------------------------------------------------------
+ 🧩 Team Sub-schema
+------------------------------------------------------- */
 const teamSchema = new mongoose.Schema(
   {
     full: {
       type: String,
       required: true,
       trim: true,
-      set: (v) => v.trim().replace(/\s+/g, " "), // Clean spacing
+      set: (v) =>
+        v
+          .trim()
+          .replace(/\s+/g, " ")
+          .split(" ")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(" "), // Auto-capitalize each word
     },
     short: {
       type: String,
@@ -18,15 +27,19 @@ const teamSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/* -------------------------------------------------------
+ 🏏 Match Schema
+------------------------------------------------------- */
 const matchSchema = new mongoose.Schema(
   {
-    // 🏏 Full match title (e.g. "India vs Australia")
+    // 📛 Match title
     title: {
       type: String,
       required: [true, "Match title is required"],
       trim: true,
       set: (v) =>
         v
+          .trim()
           .split(/\s+/)
           .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
           .join(" "),
@@ -38,50 +51,68 @@ const matchSchema = new mongoose.Schema(
       required: [true, "Match start time is required"],
     },
 
-    // ⏳ Betting close time (auto-lock trigger)
+    // ⏳ Last time a user can place a bet
     lastBetTime: {
       type: Date,
       required: [true, "Last bet time is required"],
+      validate: {
+        validator: function (v) {
+          return !this.startAt || v < this.startAt;
+        },
+        message: "Last bet time must be before match start time",
+      },
     },
 
-    // 📺 Match status
+    // 📺 Status control
     status: {
       type: String,
       enum: [
-        "UPCOMING", // before start
-        "LIVE", // running
-        "LOCKED", // bets disabled
-        "RESULT_DECLARED", // result published
-        "COMPLETED", // finished
+        "UPCOMING",
+        "LIVE",
+        "LOCKED",
+        "RESULT_DECLARED",
+        "COMPLETED",
         "CANCELLED",
       ],
       default: "UPCOMING",
     },
 
-    // 🎯 Match result (e.g. "India", "Australia", or "DRAW")
+    // 🎯 Result (e.g. "India", "Pakistan", or "DRAW")
     result: {
       type: String,
       default: "PENDING",
       trim: true,
     },
 
-    // ⚖️ Dynamic odds (supports both short/full team names)
+    // ⚖️ Odds mapping
     odds: {
       type: Map,
       of: Number,
       default: {},
     },
 
-    // 🧩 Store both teams (full + short)
+    // 🧩 Teams
     teams: {
       type: [teamSchema],
       validate: {
-        validator: (arr) => arr.length === 2,
-        message: "A match must have exactly 2 teams",
+        validator: (arr) => Array.isArray(arr) && arr.length === 2,
+        message: "Match must have exactly two teams",
       },
     },
 
-    // 👤 Admin who created the match
+    // 💰 Bet limits
+    minBet: {
+      type: Number,
+      default: 10,
+      min: [1, "Minimum bet must be at least 1"],
+    },
+    maxBet: {
+      type: Number,
+      default: 1000,
+      min: [1, "Maximum bet must be positive"],
+    },
+
+    // 🧑‍💼 Admin creator
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -91,15 +122,15 @@ const matchSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-/* ---------------------------------------------------------
- ⏰ Auto-lock middleware
- - Runs every time a match is fetched from DB
- - Auto-locks if lastBetTime < current time
---------------------------------------------------------- */
-matchSchema.post("find", async function (docs) {
+/* -------------------------------------------------------
+ ⏰ Auto-lock middleware (runs on find & findOne)
+------------------------------------------------------- */
+async function autoLock(docOrDocs) {
   const now = new Date();
+  const docs = Array.isArray(docOrDocs) ? docOrDocs : [docOrDocs];
   for (const match of docs) {
     if (
+      match &&
       match.status === "UPCOMING" &&
       match.lastBetTime &&
       new Date(match.lastBetTime) <= now
@@ -108,11 +139,14 @@ matchSchema.post("find", async function (docs) {
       await match.save();
     }
   }
-});
+}
 
-/* ---------------------------------------------------------
- 🧠 Optional helper: auto-format title from teams
---------------------------------------------------------- */
+matchSchema.post("find", autoLock);
+matchSchema.post("findOne", autoLock);
+
+/* -------------------------------------------------------
+ 🧠 Auto-generate title if missing
+------------------------------------------------------- */
 matchSchema.pre("save", function (next) {
   if (this.teams?.length === 2 && !this.title) {
     this.title = `${this.teams[0].full} vs ${this.teams[1].full}`;
