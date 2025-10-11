@@ -1,35 +1,32 @@
+import mongoose from "mongoose";
 import Match from "../models/Match.js";
 import Bet from "../models/Bet.js";
 import User from "../models/User.js";
 import Transaction from "../models/Transaction.js";
 
-/**
- * 🛠 helpers
- */
+/* -------------------------------------------------------
+ 🧩 Helpers
+------------------------------------------------------- */
 const toShort = (s = "") => String(s).trim().slice(0, 3).toUpperCase();
 const norm = (s = "") => String(s).trim().toLowerCase();
 
-/**
- * 🏏 CREATE MATCH (Admin)
- * - Auto short names
- * - Default odds 1.98x
- */
+/* -------------------------------------------------------
+ 🏏 CREATE MATCH (Admin)
+------------------------------------------------------- */
 export const createMatch = async (req, res, next) => {
   try {
     const { title, startAt } = req.body;
     if (!title) return res.status(400).json({ message: "Title is required" });
 
-    // Parse teams from title if possible
     const rawTeams = String(title)
       .split(/vs/i)
       .map((t) => t.trim())
       .filter(Boolean);
 
-    if (rawTeams.length !== 2) {
+    if (rawTeams.length !== 2)
       return res
         .status(400)
-        .json({ message: "Please enter title as 'TeamA vs TeamB'" });
-    }
+        .json({ message: "Title must be in format: 'TeamA vs TeamB'" });
 
     const normalizedTeams = rawTeams.map((t) => ({
       full: t,
@@ -50,19 +47,16 @@ export const createMatch = async (req, res, next) => {
       result: "PENDING",
     });
 
-    res.status(201).json({
-      message: "✅ Match created successfully",
-      match,
-    });
+    res.status(201).json({ message: "✅ Match created successfully", match });
   } catch (err) {
     console.error("❌ createMatch error:", err);
     next(err);
   }
 };
 
-/**
- * 📋 LIST MATCHES
- */
+/* -------------------------------------------------------
+ 📋 LIST MATCHES
+------------------------------------------------------- */
 export const listMatches = async (req, res, next) => {
   try {
     const { status } = req.query;
@@ -74,9 +68,9 @@ export const listMatches = async (req, res, next) => {
   }
 };
 
-/**
- * ✏️ UPDATE MATCH DETAILS
- */
+/* -------------------------------------------------------
+ ✏️ UPDATE MATCH DETAILS
+------------------------------------------------------- */
 export const updateMatch = async (req, res, next) => {
   try {
     const updated = await Match.findByIdAndUpdate(req.params.id, req.body, {
@@ -90,9 +84,9 @@ export const updateMatch = async (req, res, next) => {
   }
 };
 
-/**
- * ⚙️ UPDATE MATCH STATUS
- */
+/* -------------------------------------------------------
+ ⚙️ UPDATE MATCH STATUS
+------------------------------------------------------- */
 export const updateMatchStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
@@ -103,13 +97,11 @@ export const updateMatchStatus = async (req, res, next) => {
     const match = await Match.findById(req.params.id);
     if (!match) return res.status(404).json({ message: "Match not found" });
 
-    // If already completed/cancelled, block unsafe transitions
     const cur = String(match.status || "").toUpperCase();
-    if (["COMPLETED", "CANCELLED"].includes(cur)) {
+    if (["COMPLETED", "CANCELLED"].includes(cur))
       return res
         .status(400)
         .json({ message: `Match already ${cur.toLowerCase()}` });
-    }
 
     match.status = status;
     if (["UPCOMING", "LIVE"].includes(status)) match.result = "PENDING";
@@ -121,175 +113,192 @@ export const updateMatchStatus = async (req, res, next) => {
   }
 };
 
-/**
- * 🎯 DECLARE RESULT (supports DRAW + refund)
- * PUT /api/matches/:id/result  { result: "heads"/"tails"/"draw"/teamName/short }
- */
-export const setResult = async (req, res, next) => {
+/* -------------------------------------------------------
+ 🏁 PUBLISH or UPDATE RESULT  (Admin)
+ ✅ Supports: DRAW + Reversal + Re-settlement
+------------------------------------------------------- */
+export const publishOrUpdateResult = async (req, res) => {
+  const { id } = req.params;
+  const { result } = req.body;
+  if (!result) return res.status(400).json({ message: "Result is required" });
+
+  const session = await mongoose.startSession();
   try {
-    const { result } = req.body;
-    const matchId = req.params.id;
+    await session.withTransaction(async () => {
+      const match = await Match.findById(id).session(session);
+      if (!match) throw new Error("Match not found");
 
-    if (!result)
-      return res.status(400).json({ message: "Result value missing" });
+      /* 🧠 Normalize teams & result */
+      const normalizedResult = norm(result);
+      let teams;
+      if (Array.isArray(match.teams) && match.teams.length === 2) {
+        teams = match.teams.map((t) => ({
+          full: norm(t.full),
+          short: norm(t.short || toShort(t.full)),
+        }));
+      } else {
+        const [a, b] = String(match.title || "")
+          .split(/vs/i)
+          .map((s) => norm(s));
+        teams = [
+          { full: a, short: norm(toShort(a)) },
+          { full: b, short: norm(toShort(b)) },
+        ];
+      }
 
-    const match = await Match.findById(matchId);
-    if (!match) return res.status(404).json({ message: "Match not found" });
+      const winner =
+        ["draw", "abandoned", "no-result"].includes(normalizedResult) ||
+        normalizedResult === "nr"
+          ? "DRAW"
+          : teams.find(
+              (t) =>
+                t.full === normalizedResult ||
+                t.short === normalizedResult ||
+                normalizedResult === norm(t.full.slice(0, 3))
+            )?.full;
 
-    const curStatus = String(match.status || "").toUpperCase();
-    if (curStatus === "COMPLETED")
-      return res.status(400).json({ message: "Match already completed" });
-    if (curStatus === "CANCELLED")
-      return res.status(400).json({ message: "Match is cancelled" });
+      if (!winner)
+        throw new Error(
+          `Invalid result. Valid: ${teams
+            .map((t) => `${t.full.toUpperCase()} (${t.short.toUpperCase()})`)
+            .join(" or ")} or DRAW`
+        );
 
-    const r = norm(result);
+      /* 1️⃣ Reverse old settlement if already had a result */
+      const hadResultBefore =
+        !!match.result && !["PENDING", "DRAW"].includes(match.result);
+      if (hadResultBefore) {
+        const oldBets = await Bet.find({
+          match: id,
+          status: { $in: ["WON", "LOST", "REFUNDED"] },
+        }).session(session);
 
-    // -------------------------
-    // DRAW / NO-RESULT BRANCH
-    // -------------------------
-    if (["draw", "abandoned", "no result", "no-result", "nr"].includes(r)) {
-      match.status = "COMPLETED";
-      match.result = "DRAW";
-      await match.save();
+        for (const bet of oldBets) {
+          const user = await User.findById(bet.user).session(session);
+          if (!user) continue;
 
-      const bets = await Bet.find({ match: match._id });
-      let refunded = 0;
+          if (bet.status === "WON" && bet.winAmount > 0) {
+            user.walletBalance -= bet.winAmount;
+            await user.save({ session });
+            await Transaction.create(
+              [
+                {
+                  user: user._id,
+                  type: "REVERSAL",
+                  amount: -bet.winAmount,
+                  meta: {
+                    matchId: id,
+                    reason: "Reversing previous WIN due to result change",
+                    betId: bet._id,
+                  },
+                  balanceAfter: user.walletBalance,
+                },
+              ],
+              { session }
+            );
+          } else if (bet.status === "REFUNDED") {
+            user.walletBalance -= bet.stake;
+            await user.save({ session });
+            await Transaction.create(
+              [
+                {
+                  user: user._id,
+                  type: "REVERSAL",
+                  amount: -bet.stake,
+                  meta: {
+                    matchId: id,
+                    reason: "Reversing previous REFUND due to result change",
+                    betId: bet._id,
+                  },
+                  balanceAfter: user.walletBalance,
+                },
+              ],
+              { session }
+            );
+          }
+        }
+
+        // Reset bets back to pending
+        await Bet.updateMany(
+          { match: id },
+          { $set: { status: "PENDING", winAmount: 0 } },
+          { session }
+        );
+      }
+
+      /* 2️⃣ Apply new result + settle again */
+      match.result = winner;
+      match.status = "RESULT_DECLARED";
+      await match.save({ session });
+
+      const bets = await Bet.find({ match: id, status: "PENDING" }).session(
+        session
+      );
 
       for (const bet of bets) {
-        // idempotency guard
-        if (["REFUNDED", "WON", "LOST"].includes(String(bet.status))) continue;
-
-        const user = await User.findById(bet.user);
+        const user = await User.findById(bet.user).session(session);
         if (!user) continue;
 
-        user.walletBalance = Number(user.walletBalance || 0) + Number(bet.stake || 0);
-        await user.save();
+        if (winner === "DRAW") {
+          const refund = bet.stake || 0;
+          user.walletBalance += refund;
+          bet.status = "REFUNDED";
+          await user.save({ session });
+          await bet.save({ session });
 
-        bet.status = "REFUNDED";
-        await bet.save();
+          await Transaction.create(
+            [
+              {
+                user: user._id,
+                type: "REVERSAL",
+                amount: refund,
+                meta: { matchId: id, reason: "Match DRAW - refund stake" },
+                balanceAfter: user.walletBalance,
+              },
+            ],
+            { session }
+          );
+        } else {
+          const betTeam = norm(bet.team || bet.side || "");
+          if (betTeam === norm(winner)) {
+            const credit = bet.potentialWin || 0;
+            bet.status = "WON";
+            bet.winAmount = credit;
+            user.walletBalance += credit;
+            await user.save({ session });
+            await bet.save({ session });
 
-        await Transaction.create({
-          user: user._id,
-          type: "REVERSAL", // keep schema-safe
-          amount: Number(bet.stake || 0),
-          meta: { matchId: match._id, betId: bet._id, reason: "DRAW" },
-          balanceAfter: user.walletBalance,
-        });
-
-        refunded++;
+            await Transaction.create(
+              [
+                {
+                  user: user._id,
+                  type: "BET_WIN",
+                  amount: credit,
+                  meta: { matchId: id, betId: bet._id },
+                  balanceAfter: user.walletBalance,
+                },
+              ],
+              { session }
+            );
+          } else {
+            bet.status = "LOST";
+            bet.winAmount = 0;
+            await bet.save({ session });
+          }
+        }
       }
+    });
 
-      return res.json({
-        message: `🤝 Match declared DRAW — ${refunded} refunds processed.`,
-        matchId: match._id,
-      });
-    }
-
-    // -------------------------
-    // TEAM/VALUE NORMALIZATION
-    // -------------------------
-    // Ensure we have two teams; if not, attempt from title
-    let teams = Array.isArray(match.teams) ? match.teams : [];
-    if (teams.length !== 2) {
-      const parts = String(match.title || "")
-        .split(/vs/i)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (parts.length === 2) {
-        teams = [
-          { full: parts[0], short: toShort(parts[0]) },
-          { full: parts[1], short: toShort(parts[1]) },
-        ];
-      } else {
-        return res.status(400).json({
-          message:
-            "Cannot resolve teams from match; please ensure title is 'TeamA vs TeamB' or teams array is present.",
-        });
-      }
-    }
-
-    const teamNames = teams.map((t) => ({
-      full: String(t.full || "").trim(),
-      short: toShort(t.short || t.full || ""),
-      fullLower: norm(t.full || ""),
-      shortLower: norm(t.short || toShort(t.full || "")),
-      fullShort3Lower: norm(String(t.full || "").slice(0, 3)),
-    }));
-
-    const matched = teamNames.find(
-      (t) =>
-        r === t.fullLower || r === t.shortLower || r === t.fullShort3Lower
-    );
-
-    if (!matched) {
-      return res.status(400).json({
-        message: `Invalid result. Must be one of: ${teamNames
-          .map((t) => `${t.full} (${t.short})`)
-          .join(", ")} or DRAW`,
-      });
-    }
-
-    // -------------------------
-    // APPLY RESULT & SETTLE
-    // -------------------------
-    match.result = matched.fullLower; // store result as normalized full team (lowercase)
-    match.status = "COMPLETED";
-    await match.save();
-
-    const bets = await Bet.find({ match: match._id });
-    let winners = 0,
-      losers = 0;
-
-    for (const bet of bets) {
-      // idempotency guard
-      if (["REFUNDED", "WON", "LOST"].includes(String(bet.status))) continue;
-
-      const user = await User.findById(bet.user);
-      if (!user) continue;
-
-      const betSide = norm(bet.side || "");
-      const isWin =
-        betSide === matched.fullLower ||
-        betSide === norm(matched.short) ||
-        betSide === norm(matched.fullLower.slice(0, 3));
-
-      if (isWin) {
-        // WIN: credit potentialWin and mark WON
-        bet.status = "WON";
-        await bet.save();
-
-        const winAmount = Number(bet.potentialWin || 0);
-        user.walletBalance = Number(user.walletBalance || 0) + winAmount;
-        await user.save();
-
-        await Transaction.create({
-          user: user._id,
-          type: "BET_WIN", // enum-safe
-          amount: winAmount,
-          meta: { matchId: match._id, betId: bet._id, result: matched.fullLower },
-          balanceAfter: user.walletBalance,
-        });
-        winners++;
-      } else {
-        // LOSS: stake already deducted at BET_STAKE time; just mark LOST
-        bet.status = "LOST";
-        await bet.save();
-
-        // DO NOT create BET_LOST if enum doesn't allow it.
-        // (If you insist on a record, add a note-only txn type to your schema.)
-        losers++;
-      }
-    }
-
-    res.json({
-      message: `✅ Result declared for ${match.title}: ${matched.full}`,
-      matchId: match._id,
-      winners,
-      losers,
+    res.status(200).json({
+      message: "✅ Result published or updated successfully.",
+      matchId: id,
     });
   } catch (err) {
-    console.error("❌ setResult error:", err);
-    // Avoid leaking raw error in production
-    res.status(500).json({ message: "Internal error while publishing result" });
+    console.error("❌ publishOrUpdateResult error:", err.message);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: err.message });
+  } finally {
+    session.endSession();
   }
 };

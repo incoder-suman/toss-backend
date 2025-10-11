@@ -1,10 +1,11 @@
+// ✅ backend/src/routes/matchRoutes.js
 import { Router } from "express";
 import {
   createMatch,
   listMatches,
   updateMatch,
   updateMatchStatus,
-  setResult,
+  publishOrUpdateResult, // ✅ unified controller for result publish/update
 } from "../controllers/matchController.js";
 import { auth } from "../middleware/auth.js";
 
@@ -14,11 +15,11 @@ const router = Router();
  📍 PUBLIC ROUTES
 --------------------------------------------------------- */
 
-// 🧾 List all matches (frontend users)
+// 🧾 List all matches (for frontend users)
 router.get("/", listMatches);
 
 /* ---------------------------------------------------------
- 🛡️ ADMIN ROUTES (protected by auth middleware)
+ 🛡️ ADMIN ROUTES (protected)
 --------------------------------------------------------- */
 
 // 🏏 Create a new match
@@ -30,8 +31,8 @@ router.put("/:id", auth("admin"), updateMatch);
 // ⚙️ Update match status (UPCOMING / LIVE / COMPLETED / CANCELLED)
 router.put("/:id/status", auth("admin"), updateMatchStatus);
 
-// 🏁 Finalize match result + settle bets (WIN / LOSS / DRAW)
-router.put("/:id/result", auth("admin"), setResult);
+// 🏁 Publish or Update match result + settle/reverse bets (WIN / LOSS / DRAW)
+router.put("/:id/result", auth("admin"), publishOrUpdateResult);
 
 /* ---------------------------------------------------------
  ✅ EXPORT ROUTER
