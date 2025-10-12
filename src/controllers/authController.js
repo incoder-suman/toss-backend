@@ -10,33 +10,26 @@ const signToken = (user) =>
     { expiresIn: process.env.JWT_EXPIRES || "7d" }
   );
 
-/**
- * 🧍 REGISTER CONTROLLER
- * - Email optional
- * - Auto-generates dummy email if missing
- * - Hashes password before saving
- */
-export const register = async (req, res, next) => {
+/* ------------------------------------------------------------------
+ 🧍 REGISTER CONTROLLER
+ - Email optional
+ - Auto-generates dummy email if missing
+ - Hashes password before saving
+------------------------------------------------------------------ */
+export const register = async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
 
     if (!name || !password)
-      return res
-        .status(400)
-        .json({ message: "Name and password are required" });
+      return res.status(400).json({ message: "Name and password are required" });
 
-    // ✅ If email blank, generate a unique dummy one
     const safeEmail =
       email && email.trim() !== ""
         ? email.trim().toLowerCase()
-        : `${Date.now()}_${Math.random()
-            .toString(36)
-            .substring(2, 8)}@example.com`;
+        : `${Date.now()}_${Math.random().toString(36).substring(2, 8)}@example.com`;
 
-    // ✅ Avoid duplicate emails
     const exists = await User.findOne({ email: safeEmail });
-    if (exists)
-      return res.status(400).json({ message: "Email already in use" });
+    if (exists) return res.status(400).json({ message: "Email already in use" });
 
     const hash = await bcrypt.hash(password, 10);
 
@@ -62,22 +55,21 @@ export const register = async (req, res, next) => {
   }
 };
 
-/**
- * 🔑 LOGIN CONTROLLER
- * - Accepts `identifier` (email OR username)
- * - Validates password
- * - Returns JWT + user object
- */
-export const login = async (req, res, next) => {
+/* ------------------------------------------------------------------
+ 🔑 LOGIN CONTROLLER
+ - Accepts `identifier` (email OR username)
+ - Validates password
+ - Returns JWT + user object
+------------------------------------------------------------------ */
+export const login = async (req, res) => {
   try {
     const { identifier, password } = req.body;
 
     if (!identifier || !password)
-      return res
-        .status(400)
-        .json({ message: "User ID or Email and password are required" });
+      return res.status(400).json({
+        message: "User ID or Email and password are required",
+      });
 
-    // ✅ Find user by email OR username
     const user = await User.findOne({
       $or: [
         { email: identifier.toLowerCase() },
@@ -91,13 +83,10 @@ export const login = async (req, res, next) => {
         .json({ message: "User not found. Please check your credentials." });
 
     if (user.isBlocked)
-      return res
-        .status(403)
-        .json({ message: "User is blocked. Contact support." });
+      return res.status(403).json({ message: "User is blocked. Contact support." });
 
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword)
-      return res.status(400).json({ message: "Invalid password" });
+    if (!validPassword) return res.status(400).json({ message: "Invalid password" });
 
     const token = signToken(user);
 
@@ -118,18 +107,48 @@ export const login = async (req, res, next) => {
   }
 };
 
-/**
- * 🧩 ME CONTROLLER
- * - Returns logged-in user info (without password)
- */
-export const getMe = async (req, res, next) => {
+/* ------------------------------------------------------------------
+ 🧩 ME CONTROLLER
+ - Returns logged-in user info (without password)
+------------------------------------------------------------------ */
+export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    if (!user)
-      return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ message: "User not found" });
     res.json({ user });
   } catch (e) {
     console.error("❌ getMe error:", e.message);
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+/* ------------------------------------------------------------------
+ 🔐 CHANGE PASSWORD CONTROLLER
+ - Requires oldPassword, newPassword
+ - Auth middleware (verifyToken) must be active
+------------------------------------------------------------------ */
+export const changePassword = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const { oldPassword, newPassword } = req.body;
+
+    if (!userId || !oldPassword || !newPassword)
+      return res.status(400).json({ message: "Missing required fields" });
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch)
+      return res.status(400).json({ message: "Old password is incorrect" });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    user.password = hash;
+    await user.save();
+
+    res.json({ message: "✅ Password changed successfully" });
+  } catch (e) {
+    console.error("❌ changePassword error:", e.message);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };

@@ -1,27 +1,50 @@
+// backend/src/middleware/auth.js
 import jwt from "jsonwebtoken";
 
+/**
+ * 🔐 Auth Middleware
+ * - Verifies JWT from Authorization header
+ * - Optionally restricts by role(s)
+ * - Attaches decoded user info to req.user
+ *
+ * @param {string|string[]} roles - Optional allowed roles (e.g. 'admin' or ['admin', 'user'])
+ */
 export const auth = (roles = []) => {
+  // Convert single role string into array
   if (typeof roles === "string") roles = [roles];
 
   return (req, res, next) => {
     try {
       const header = req.headers.authorization || "";
-      const token = header.startsWith("Bearer ") ? header.substring(7) : null;
+      const token = header.startsWith("Bearer ") ? header.split(" ")[1] : null;
 
       if (!token) {
-        return res.status(401).json({ message: "No token" });
+        return res.status(401).json({ success: false, message: "Unauthorized — Token missing" });
       }
 
-      const payload = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = payload; // { id, role }
+      // ✅ Verify JWT
+      const secret = process.env.JWT_SECRET || "tossbook-secret-key";
+      const payload = jwt.verify(token, secret);
 
-      if (roles.length && !roles.includes(payload.role)) {
-        return res.status(403).json({ message: "Forbidden" });
+      if (!payload?.id) {
+        return res.status(401).json({ success: false, message: "Invalid token payload" });
+      }
+
+      // ✅ Attach to req.user
+      req.user = {
+        id: payload.id,
+        role: payload.role || "user",
+      };
+
+      // ✅ Role restriction check (if provided)
+      if (roles.length > 0 && !roles.includes(req.user.role)) {
+        return res.status(403).json({ success: false, message: "Forbidden — Insufficient privileges" });
       }
 
       next();
-    } catch (e) {
-      return res.status(401).json({ message: "Invalid/Expired token" });
+    } catch (err) {
+      console.error("❌ Auth middleware error:", err.message);
+      return res.status(401).json({ success: false, message: "Invalid or expired token" });
     }
   };
 };
