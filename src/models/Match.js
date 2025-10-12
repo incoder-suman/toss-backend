@@ -161,8 +161,8 @@ matchSchema.pre("save", function (next) {
   next();
 });
 
-/* -------------------------------------------------------
- 🚀 Export (force refresh)
-------------------------------------------------------- */
-mongoose.deleteModel?.("Match"); // 💥 clears cached schema
+// 💥 Safe model reload (no MissingSchemaError)
+if (mongoose.models.Match) {
+  delete mongoose.models.Match;
+}
 export default mongoose.model("Match", matchSchema);
