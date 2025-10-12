@@ -23,30 +23,37 @@ export const deposit = async (req, res) => {
 
     const user = await User.findById(userId);
     if (!user)
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     user.walletBalance = toNum(user.walletBalance) + toNum(amount);
     await user.save();
 
     const txn = await Transaction.create({
       user: user._id,
-      type: "DEPOSIT",
+      type: "ADMIN_CREDIT", // ✅ use consistent type for admin deposits
       amount: toNum(amount),
-      meta: { addedBy: actorId, note: note || "Manual deposit" },
+      meta: {
+        addedBy: actorId,
+        note: note || "Token added by Admin",
+      },
       balanceAfter: user.walletBalance,
     });
 
     return res.status(200).json({
       success: true,
-      message: "✅ Deposit successful",
+      message: "✅ Token added by Admin",
       walletBalance: user.walletBalance,
       transaction: txn,
     });
   } catch (error) {
     console.error("❌ Deposit error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
@@ -66,7 +73,9 @@ export const withdraw = async (req, res) => {
 
     const user = await User.findById(userId);
     if (!user)
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     if (toNum(user.walletBalance) < toNum(amount)) {
       return res
@@ -80,22 +89,27 @@ export const withdraw = async (req, res) => {
     const txn = await Transaction.create({
       user: user._id,
       type: "WITHDRAW",
-      amount: -toNum(amount),
-      meta: { withdrawnBy: actorId, note: note || "Manual withdraw" },
+      amount: -toNum(amount), // always negative for clarity
+      meta: {
+        withdrawnBy: actorId,
+        note: note || "Money withdrawn from wallet",
+      },
       balanceAfter: user.walletBalance,
     });
 
     return res.status(200).json({
       success: true,
-      message: "✅ Withdrawal successful",
+      message: "✅ Money withdrawn successfully",
       walletBalance: user.walletBalance,
       transaction: txn,
     });
   } catch (error) {
     console.error("❌ Withdraw error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
@@ -118,18 +132,30 @@ export const transactions = async (req, res) => {
       Transaction.countDocuments(filter),
     ]);
 
+    // ✅ ensure output structure clean and readable
+    const formatted = items.map((txn) => ({
+      _id: txn._id,
+      type: txn.type,
+      amount: txn.amount,
+      balanceAfter: txn.balanceAfter,
+      createdAt: txn.createdAt,
+      meta: txn.meta || {},
+    }));
+
     return res.status(200).json({
       success: true,
       total,
       page,
       limit,
-      transactions: items,
+      transactions: formatted,
     });
   } catch (error) {
     console.error("❌ Transactions fetch error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
 
@@ -144,10 +170,13 @@ export const getWalletBalance = async (req, res) => {
     );
 
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
     }
 
-    // Calculate current exposure (total active BET_STAKE)
+    // ✅ Calculate exposure from current BET_STAKEs
     const exposure = await Transaction.aggregate([
       {
         $match: {
@@ -179,8 +208,10 @@ export const getWalletBalance = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ getWalletBalance error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Server error", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };
