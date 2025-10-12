@@ -16,9 +16,10 @@ export const deposit = async (req, res) => {
     const actorId = req.user?.id || null;
 
     if (!userId || toNum(amount) <= 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid userId or amount" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId or amount",
+      });
     }
 
     const user = await User.findById(userId);
@@ -32,7 +33,7 @@ export const deposit = async (req, res) => {
 
     const txn = await Transaction.create({
       user: user._id,
-      type: "ADMIN_CREDIT", // ✅ use consistent type for admin deposits
+      type: "ADMIN_CREDIT",
       amount: toNum(amount),
       meta: {
         addedBy: actorId,
@@ -66,9 +67,10 @@ export const withdraw = async (req, res) => {
     const actorId = req.user?.id || null;
 
     if (!userId || toNum(amount) <= 0) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid userId or amount" });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid userId or amount",
+      });
     }
 
     const user = await User.findById(userId);
@@ -78,9 +80,10 @@ export const withdraw = async (req, res) => {
         .json({ success: false, message: "User not found" });
 
     if (toNum(user.walletBalance) < toNum(amount)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Insufficient wallet balance" });
+      return res.status(400).json({
+        success: false,
+        message: "Insufficient wallet balance",
+      });
     }
 
     user.walletBalance -= toNum(amount);
@@ -89,7 +92,7 @@ export const withdraw = async (req, res) => {
     const txn = await Transaction.create({
       user: user._id,
       type: "WITHDRAW",
-      amount: -toNum(amount), // always negative for clarity
+      amount: -toNum(amount), // negative for clarity
       meta: {
         withdrawnBy: actorId,
         note: note || "Money withdrawn from wallet",
@@ -121,7 +124,6 @@ export const transactions = async (req, res) => {
     const userId = req.query.userId || req.user?.id;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-
     const filter = userId ? { user: userId } : {};
 
     const [items, total] = await Promise.all([
@@ -132,7 +134,6 @@ export const transactions = async (req, res) => {
       Transaction.countDocuments(filter),
     ]);
 
-    // ✅ ensure output structure clean and readable
     const formatted = items.map((txn) => ({
       _id: txn._id,
       type: txn.type,
@@ -161,12 +162,12 @@ export const transactions = async (req, res) => {
 
 /* -------------------------------------------------------
  💼 WALLET BALANCE — (User or Admin)
- Includes Exposure (active stakes)
+ Directly uses `exposure` field (no aggregate confusion)
 ------------------------------------------------------- */
 export const getWalletBalance = async (req, res) => {
   try {
     const user = await User.findById(req.user?.id).select(
-      "walletBalance name email"
+      "walletBalance exposure name email"
     );
 
     if (!user) {
@@ -176,29 +177,14 @@ export const getWalletBalance = async (req, res) => {
       });
     }
 
-    // ✅ Calculate exposure from current BET_STAKEs
-    const exposure = await Transaction.aggregate([
-      {
-        $match: {
-          user: user._id,
-          type: "BET_STAKE",
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: { $abs: "$amount" } },
-        },
-      },
-    ]);
-
-    const expAmount = exposure[0]?.total || 0;
+    const walletBalance = toNum(user.walletBalance);
+    const exposure = toNum(user.exposure);
 
     return res.status(200).json({
       success: true,
-      walletBalance: toNum(user.walletBalance),
-      exposure: toNum(expAmount),
-      availableBalance: toNum(user.walletBalance) - toNum(expAmount),
+      walletBalance,
+      exposure,
+      availableBalance: walletBalance, // EXP is locked; BAL visible directly
       currency: "INR",
       user: {
         id: user._id,
