@@ -19,7 +19,8 @@ router.post("/", auth("user"), placeBet);
  👤 Get all bets of the logged-in user
  (for user panel - “My Bets”)
 ------------------------------------------------------- */
-router.get("/me", auth("user"), myBets);
+// ⚙️ ✅ FIXED PATH — change /me ➝ /my
+router.get("/my", auth("user"), myBets);
 
 /* -------------------------------------------------------
  🕹️ Toss history (completed matches only)
