@@ -1,4 +1,3 @@
-// ✅ backend/src/models/Match.js
 import mongoose from "mongoose";
 
 /* -------------------------------------------------------
@@ -45,10 +44,10 @@ const matchSchema = new mongoose.Schema(
           .join(" "),
     },
 
-    // 🕒 Match start time
+    // 🕒 Match start time (optional now)
     startAt: {
       type: Date,
-      required: [true, "Match start time is required"],
+      required: false, // 🔧 made optional
     },
 
     // ⏳ Last time a user can place a bet
@@ -57,7 +56,9 @@ const matchSchema = new mongoose.Schema(
       required: [true, "Last bet time is required"],
       validate: {
         validator: function (v) {
-          return !this.startAt || v < this.startAt;
+          // ✅ Allow if startAt is missing or valid sequence
+          if (!this.startAt) return true;
+          return v < this.startAt;
         },
         message: "Last bet time must be before match start time",
       },
