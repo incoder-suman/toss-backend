@@ -96,7 +96,7 @@ export const placeBet = async (req, res, next) => {
         .status(400)
         .json({ message: "Insufficient balance or user blocked" });
 
-    // ✅ Transaction (with meta: matchName & side)
+    // ✅ Transaction log (stake)
     await Transaction.create({
       user: userAfter._id,
       type: "BET_STAKE",
@@ -152,12 +152,10 @@ export const publishResult = async (req, res) => {
     const match = await Match.findById(matchId);
     if (!match) return res.status(404).json({ message: "Match not found" });
 
-    // ✅ Update match
     match.result = result;
     match.status = "COMPLETED";
     await match.save();
 
-    // ✅ Get all bets
     const bets = await Bet.find({ match: matchId });
 
     for (const bet of bets) {
@@ -165,7 +163,7 @@ export const publishResult = async (req, res) => {
       if (!user) continue;
 
       if (bet.team.toLowerCase() === result.toLowerCase()) {
-        // 🟩 User won
+        // 🟩 WIN
         const winAmount = bet.potentialWin;
         user.walletBalance += winAmount;
         await user.save();
@@ -186,7 +184,7 @@ export const publishResult = async (req, res) => {
         bet.winAmount = winAmount;
         await bet.save();
       } else {
-        // 🔴 User lost
+        // 🔴 LOST
         await Transaction.create({
           user: user._id,
           type: "BET_LOST",
@@ -281,6 +279,53 @@ export const myBets = async (req, res, next) => {
   } catch (err) {
     console.error("❌ myBets error:", err);
     next(err);
+  }
+};
+
+/* -------------------------------------------------------
+ ❌ CANCEL BET (Refund wallet + delete bet)
+------------------------------------------------------- */
+export const cancelBet = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    const betId = req.params.id;
+
+    const bet = await Bet.findById(betId);
+    if (!bet) return res.status(404).json({ message: "Bet not found" });
+
+    if (String(bet.user) !== String(userId))
+      return res.status(403).json({ message: "Unauthorized cancel attempt" });
+
+    if (bet.status !== "PENDING")
+      return res.status(400).json({ message: "Bet already settled" });
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    user.walletBalance += bet.stake;
+    await user.save();
+
+    await Transaction.create({
+      user: user._id,
+      type: "REVERSAL",
+      amount: bet.stake,
+      meta: {
+        matchId: bet.match,
+        note: "Bet cancelled and refunded",
+      },
+      balanceAfter: user.walletBalance,
+    });
+
+    await Bet.deleteOne({ _id: betId });
+
+    return res.json({
+      success: true,
+      message: "Bet cancelled and refunded successfully",
+      walletBalance: user.walletBalance,
+    });
+  } catch (err) {
+    console.error("❌ cancelBet error:", err);
+    res.status(500).json({ message: err.message });
   }
 };
 

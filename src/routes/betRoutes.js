@@ -5,6 +5,7 @@ import {
   listBets,
   myBets,
   tossHistory,
+  cancelBet, // 👈 add this import
 } from "../controllers/betController.js";
 import { auth } from "../middleware/auth.js";
 
@@ -16,10 +17,15 @@ const router = Router();
 router.post("/", auth("user"), placeBet);
 
 /* -------------------------------------------------------
+ ❌ Cancel an existing bet (User)
+ (Refund wallet and remove bet)
+------------------------------------------------------- */
+router.delete("/:id", auth("user"), cancelBet); // 👈 added route
+
+/* -------------------------------------------------------
  👤 Get all bets of the logged-in user
  (for user panel - “My Bets”)
 ------------------------------------------------------- */
-// ⚙️ ✅ FIXED PATH — change /me ➝ /my
 router.get("/my", auth("user"), myBets);
 
 /* -------------------------------------------------------
