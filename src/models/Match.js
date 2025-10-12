@@ -34,7 +34,6 @@ const teamSchema = new mongoose.Schema(
 ------------------------------------------------------- */
 const matchSchema = new mongoose.Schema(
   {
-    // 📛 Match title
     title: {
       type: String,
       required: [true, "Match title is required"],
@@ -49,24 +48,26 @@ const matchSchema = new mongoose.Schema(
           .join(" "),
     },
 
-    // 🕒 Match start time (optional)
     startAt: {
       type: Date,
-      required: false, // 🔧 optional now
+      required: false, // optional
     },
 
-    // ⏳ Last time a user can place a bet
     lastBetTime: {
       type: Date,
       required: [true, "Last bet time is required"],
       validate: {
         validator: function (v) {
-          // ✅ fully safe validator
           try {
-            if (!this || !this.startAt) return true; // allow if startAt missing
+            // ✅ Allow if startAt missing
+            if (!this || !this.startAt) return true;
+
             const last = new Date(v).getTime();
             const start = new Date(this.startAt).getTime();
-            if (isNaN(last) || isNaN(start)) return true; // skip invalid conversions
+
+            // skip invalid conversions
+            if (isNaN(last) || isNaN(start)) return true;
+
             return last < start;
           } catch {
             return true;
@@ -76,7 +77,6 @@ const matchSchema = new mongoose.Schema(
       },
     },
 
-    // 📺 Status control
     status: {
       type: String,
       enum: [
@@ -90,21 +90,18 @@ const matchSchema = new mongoose.Schema(
       default: "UPCOMING",
     },
 
-    // 🎯 Result (e.g. "India", "Pakistan", or "DRAW")
     result: {
       type: String,
       default: "PENDING",
       trim: true,
     },
 
-    // ⚖️ Odds mapping
     odds: {
       type: Map,
       of: Number,
       default: {},
     },
 
-    // 🧩 Teams
     teams: {
       type: [teamSchema],
       validate: {
@@ -113,7 +110,6 @@ const matchSchema = new mongoose.Schema(
       },
     },
 
-    // 💰 Bet limits
     minBet: {
       type: Number,
       default: 10,
@@ -125,7 +121,6 @@ const matchSchema = new mongoose.Schema(
       min: [1, "Maximum bet must be positive"],
     },
 
-    // 🧑‍💼 Admin creator
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -166,4 +161,8 @@ matchSchema.pre("save", function (next) {
   next();
 });
 
-export default mongoose.models.Match || mongoose.model("Match", matchSchema);
+/* -------------------------------------------------------
+ 🚀 Export (force refresh)
+------------------------------------------------------- */
+mongoose.deleteModel?.("Match"); // 💥 clears cached schema
+export default mongoose.model("Match", matchSchema);
