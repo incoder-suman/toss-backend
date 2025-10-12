@@ -1,3 +1,4 @@
+// ✅ backend/src/controllers/matchController.js
 import Match from "../models/Match.js";
 import Bet from "../models/Bet.js";
 import User from "../models/User.js";
@@ -16,34 +17,27 @@ export const createMatch = async (req, res, next) => {
   try {
     const { title, lastBetTime, minBet, maxBet } = req.body;
 
-    // ⚠️ startAt ab optional hai, validation hata diya
     if (!title || !lastBetTime) {
       return res
         .status(400)
         .json({ message: "Title and lastBetTime are required" });
     }
 
-    const close = new Date(lastBetTime);
-    if (isNaN(close)) {
-      return res.status(400).json({ message: "Invalid lastBetTime provided" });
+    const liveTime = new Date(lastBetTime);
+    if (isNaN(liveTime)) {
+      return res.status(400).json({ message: "Invalid date format for lastBetTime" });
     }
 
-    // ✅ Optional startAt — default to +30 minutes after lastBetTime
-    const start =
-      req.body.startAt && !isNaN(new Date(req.body.startAt))
-        ? new Date(req.body.startAt)
-        : new Date(close.getTime() + 30 * 60 * 1000);
-
-    // Parse teams from title
+    // Parse teams
     const rawTeams = String(title)
       .split(/vs/i)
       .map((t) => t.trim())
       .filter(Boolean);
 
     if (rawTeams.length !== 2) {
-      return res
-        .status(400)
-        .json({ message: "Title must be in format: 'TeamA vs TeamB'" });
+      return res.status(400).json({
+        message: "Title must be in format: 'TeamA vs TeamB'",
+      });
     }
 
     const teams = rawTeams.map((t) => ({ full: t, short: toShort(t) }));
@@ -51,8 +45,7 @@ export const createMatch = async (req, res, next) => {
 
     const match = await Match.create({
       title: `${teams[0].full} vs ${teams[1].full}`,
-      startAt: start,
-      lastBetTime: close,
+      lastBetTime: liveTime, // single decisive time
       odds,
       teams,
       status: "UPCOMING",
@@ -87,21 +80,6 @@ export const listMatches = async (req, res, next) => {
 ------------------------------------------------------- */
 export const updateMatch = async (req, res, next) => {
   try {
-    // ✅ Validate only if both times provided
-    if (req.body.startAt || req.body.lastBetTime) {
-      const start = req.body.startAt ? new Date(req.body.startAt) : null;
-      const close = req.body.lastBetTime ? new Date(req.body.lastBetTime) : null;
-
-      if (start && isNaN(start))
-        return res.status(400).json({ message: "Invalid startAt" });
-      if (close && isNaN(close))
-        return res.status(400).json({ message: "Invalid lastBetTime" });
-      if (start && close && close >= start)
-        return res
-          .status(400)
-          .json({ message: "lastBetTime must be before startAt" });
-    }
-
     const updated = await Match.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
@@ -130,9 +108,7 @@ export const updateMatchStatus = async (req, res, next) => {
 
     const cur = String(match.status || "").toUpperCase();
     if (["COMPLETED", "CANCELLED"].includes(cur)) {
-      return res
-        .status(400)
-        .json({ message: `Match already ${cur.toLowerCase()}` });
+      return res.status(400).json({ message: `Match already ${cur.toLowerCase()}` });
     }
 
     match.status = status;
@@ -248,9 +224,7 @@ export const publishOrUpdateResult = async (req, res) => {
     await match.save();
 
     const bets = await Bet.find({ match: id, status: "PENDING" });
-    let wins = 0,
-      losses = 0,
-      refunds = 0;
+    let wins = 0, losses = 0, refunds = 0;
 
     for (const b of bets) {
       const user = await User.findById(b.user);
@@ -308,6 +282,9 @@ export const publishOrUpdateResult = async (req, res) => {
     console.error("❌ publishOrUpdateResult error:", err?.message || err);
     res
       .status(500)
-      .json({ message: "Internal Server Error", error: err?.message || String(err) });
+      .json({
+        message: "Internal Server Error",
+        error: err?.message || String(err),
+      });
   }
 };

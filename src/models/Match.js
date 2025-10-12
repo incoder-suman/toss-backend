@@ -15,9 +15,7 @@ const teamSchema = new mongoose.Schema(
           .trim()
           .replace(/\s+/g, " ")
           .split(" ")
-          .map(
-            (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
-          )
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
           .join(" "),
     },
     short: {
@@ -43,57 +41,28 @@ const matchSchema = new mongoose.Schema(
         v
           .trim()
           .split(/\s+/)
-          .map(
-            (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
-          )
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
           .join(" "),
     },
 
-    // 🕒 Match start time (optional)
+    // 🕒 Optional (agar aage kabhi dubaara chahiye ho)
     startAt: {
       type: Date,
-      required: false, // optional
+      required: false,
     },
 
-    // ⏳ Last time a user can place a bet
+    // ⏳ Single decisive time: iske baad bet band -> LOCKED
     lastBetTime: {
       type: Date,
       required: [true, "Last bet time is required"],
-      validate: {
-        validator: function (v) {
-          try {
-            // ✅ Capture reference to prevent Render ESM context issue
-            const self = this;
-            if (!self || !self.startAt) return true; // allow if startAt missing
-
-            const last = new Date(v).getTime();
-            const start = new Date(self.startAt).getTime();
-
-            // ✅ Skip invalid or missing conversions
-            if (isNaN(last) || isNaN(start)) return true;
-
-            // ✅ Must be before match start
-            return last < start;
-          } catch (err) {
-            console.error("⚠️ Validator error in lastBetTime:", err);
-            return true;
-          }
-        },
-        message: "Last bet time must be before match start time",
-      },
+      index: true,
+      // ❌ NO custom validator anymore — simple & robust
     },
 
     // 📺 Status control
     status: {
       type: String,
-      enum: [
-        "UPCOMING",
-        "LIVE",
-        "LOCKED",
-        "RESULT_DECLARED",
-        "COMPLETED",
-        "CANCELLED",
-      ],
+      enum: ["UPCOMING", "LIVE", "LOCKED", "COMPLETED", "CANCELLED"],
       default: "UPCOMING",
     },
 
@@ -143,7 +112,7 @@ const matchSchema = new mongoose.Schema(
 );
 
 /* -------------------------------------------------------
- ⏰ Auto-lock middleware
+ ⏰ Auto-lock middleware (runs on find/findOne)
 ------------------------------------------------------- */
 async function autoLock(docOrDocs) {
   const now = new Date();
@@ -174,7 +143,7 @@ matchSchema.pre("save", function (next) {
 });
 
 /* -------------------------------------------------------
- 🚀 Safe export — prevents cache and schema mismatch
+ 🚀 Safe export — prevent cached old schema on hot reload
 ------------------------------------------------------- */
 if (mongoose.models.Match) {
   delete mongoose.models.Match;
