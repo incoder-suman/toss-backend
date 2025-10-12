@@ -1,3 +1,4 @@
+// ✅ backend/src/models/Match.js
 import mongoose from "mongoose";
 
 /* -------------------------------------------------------
@@ -14,8 +15,10 @@ const teamSchema = new mongoose.Schema(
           .trim()
           .replace(/\s+/g, " ")
           .split(" ")
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-          .join(" "), // Auto-capitalize each word
+          .map(
+            (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+          )
+          .join(" "),
     },
     short: {
       type: String,
@@ -40,14 +43,16 @@ const matchSchema = new mongoose.Schema(
         v
           .trim()
           .split(/\s+/)
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .map(
+            (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+          )
           .join(" "),
     },
 
-    // 🕒 Match start time (optional now)
+    // 🕒 Match start time (optional)
     startAt: {
       type: Date,
-      required: false, // 🔧 made optional
+      required: false, // 🔧 optional now
     },
 
     // ⏳ Last time a user can place a bet
@@ -56,9 +61,16 @@ const matchSchema = new mongoose.Schema(
       required: [true, "Last bet time is required"],
       validate: {
         validator: function (v) {
-          // ✅ Allow if startAt is missing or valid sequence
-          if (!this.startAt) return true;
-          return v < this.startAt;
+          // ✅ fully safe validator
+          try {
+            if (!this || !this.startAt) return true; // allow if startAt missing
+            const last = new Date(v).getTime();
+            const start = new Date(this.startAt).getTime();
+            if (isNaN(last) || isNaN(start)) return true; // skip invalid conversions
+            return last < start;
+          } catch {
+            return true;
+          }
         },
         message: "Last bet time must be before match start time",
       },
@@ -124,7 +136,7 @@ const matchSchema = new mongoose.Schema(
 );
 
 /* -------------------------------------------------------
- ⏰ Auto-lock middleware (runs on find & findOne)
+ ⏰ Auto-lock middleware
 ------------------------------------------------------- */
 async function autoLock(docOrDocs) {
   const now = new Date();
@@ -141,12 +153,11 @@ async function autoLock(docOrDocs) {
     }
   }
 }
-
 matchSchema.post("find", autoLock);
 matchSchema.post("findOne", autoLock);
 
 /* -------------------------------------------------------
- 🧠 Auto-generate title if missing
+ 🧠 Auto title if missing
 ------------------------------------------------------- */
 matchSchema.pre("save", function (next) {
   if (this.teams?.length === 2 && !this.title) {
