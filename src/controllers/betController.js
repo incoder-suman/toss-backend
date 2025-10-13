@@ -153,38 +153,32 @@ export const publishResult = async (req, res) => {
     const { matchId, result } = req.body;
 
     if (!matchId || !result) {
-      return res
-        .status(400)
-        .json({ message: "Match ID and result required" });
+      return res.status(400).json({ message: "Match ID and result required" });
     }
 
     // ✅ Find Match
     const match = await Match.findById(matchId);
-    if (!match)
-      return res.status(404).json({ message: "Match not found" });
+    if (!match) return res.status(404).json({ message: "Match not found" });
 
+    // ✅ Normalize result for comparison
     const resultNorm = String(result || "").trim().toLowerCase();
-    console.log("🟡 BEFORE:", {
-  name: user.name,
-  bal: user.walletBalance,
-  exp: user.exposure,
-  stake: bet.stake,
-  credit: creditAmount,
-  txnType,
-});
 
-    // ✅ Update Match
+    // ✅ Update Match status & result
     match.result = result;
     match.status = "COMPLETED";
     await match.save();
 
     // ✅ Fetch all Bets for this Match
     const bets = await Bet.find({ match: matchId });
-    if (!bets.length)
-      return res.json({
-        success: false,
-        message: "No bets found for this match",
-      });
+    if (!bets.length) {
+      return res.json({ success: false, message: "No bets found for this match" });
+    }
+
+    // ✅ Match name fallback logic
+    const matchName =
+      match.matchName ||
+      match.title ||
+      `${match.teamA || "Team A"} Vs ${match.teamB || "Team B"}`;
 
     // ✅ Loop through each bet and settle it
     for (const bet of bets) {
@@ -221,42 +215,31 @@ export const publishResult = async (req, res) => {
        ✅ Atomic Update (Exposure ↓, BAL += if win/refund)
       ----------------------------------------------- */
       const stakeValue = toNum(bet.stake);
-const creditValue = toNum(creditAmount);
+      const creditValue = toNum(creditAmount);
 
-const currentUser = await User.findById(userId);
-if (!currentUser) continue;
+      // always decrease exposure
+      user.exposure = Math.max(toNum(user.exposure) - stakeValue, 0);
 
-// always decrease exposure
-currentUser.exposure = Math.max(toNum(currentUser.exposure) - stakeValue, 0);
+      // credit wallet only on win/draw
+      if (creditValue > 0) {
+        user.walletBalance = toNum(user.walletBalance) + creditValue;
+      }
 
-// credit wallet only on win/draw
-if (creditValue > 0) {
-  currentUser.walletBalance = toNum(currentUser.walletBalance) + creditValue;
-}
+      await user.save(); // commit to DB
 
-await currentUser.save(); // commit to DB
-console.log("🟢 AFTER SAVE:", {
-  name: user.name,
-  bal: user.walletBalance,
-  exp: user.exposure,
-});
       /* -----------------------------------------------
        💾 Transaction Record
       ----------------------------------------------- */
-      const updatedUser = await User.findById(userId).select(
-        "walletBalance exposure"
-      );
-
       await Transaction.create({
         user: userId,
         type: txnType,
         amount: creditAmount,
         meta: {
           matchId,
-          matchName: match.title,
+          matchName, // ✅ FIXED — always has real name
           side: bet.team,
         },
-        balanceAfter: updatedUser.walletBalance,
+        balanceAfter: user.walletBalance,
       });
 
       await bet.save();
@@ -271,7 +254,6 @@ console.log("🟢 AFTER SAVE:", {
     res.status(500).json({ message: err.message });
   }
 };
-
 
 /* -------------------------------------------------------
  📜 LIST ALL BETS
