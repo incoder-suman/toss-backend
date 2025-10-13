@@ -148,26 +148,37 @@ export const placeBet = async (req, res, next) => {
 /* -------------------------------------------------------
  🏆 PUBLISH RESULT — EXP ↓, BAL update (WIN/LOSS/DRAW)
 ------------------------------------------------------- */
-/* -------------------------------------------------------
- 🏆 PUBLISH RESULT — EXP ↓, BAL update (WIN/LOSS/DRAW)
-------------------------------------------------------- */
 export const publishResult = async (req, res) => {
   try {
     const { matchId, result } = req.body;
-    if (!matchId || !result)
-      return res.status(400).json({ message: "Match ID and result required" });
 
+    if (!matchId || !result) {
+      return res
+        .status(400)
+        .json({ message: "Match ID and result required" });
+    }
+
+    // ✅ Find Match
     const match = await Match.findById(matchId);
-    if (!match) return res.status(404).json({ message: "Match not found" });
+    if (!match)
+      return res.status(404).json({ message: "Match not found" });
 
     const resultNorm = String(result || "").trim().toLowerCase();
 
+    // ✅ Update Match
     match.result = result;
     match.status = "COMPLETED";
     await match.save();
 
+    // ✅ Fetch all Bets for this Match
     const bets = await Bet.find({ match: matchId });
+    if (!bets.length)
+      return res.json({
+        success: false,
+        message: "No bets found for this match",
+      });
 
+    // ✅ Loop through each bet and settle it
     for (const bet of bets) {
       const userId = bet.user;
       const user = await User.findById(userId);
@@ -183,37 +194,42 @@ export const publishResult = async (req, res) => {
       if (resultNorm === "draw") {
         // 🟡 DRAW — refund stake
         creditAmount = toNum(bet.stake);
-        user.walletBalance += creditAmount;
         txnType = "REVERSAL";
         bet.status = "REFUNDED";
         bet.winAmount = 0;
       } else if (betTeam === resultNorm) {
         // 🟢 WIN — pay potentialWin
         creditAmount = toNum(bet.potentialWin);
-        user.walletBalance += creditAmount;
         txnType = "BET_WIN";
         bet.status = "WON";
         bet.winAmount = creditAmount;
       } else {
-        // 🔴 LOSS — no credit
+        // 🔴 LOSS — no payout
         bet.status = "LOST";
         bet.winAmount = 0;
       }
 
       /* -----------------------------------------------
-       ✅ Atomic Exposure Update (no race condition)
+       ✅ Atomic Update (Exposure ↓, BAL += if win/refund)
       ----------------------------------------------- */
-      await User.updateOne(
-        { _id: userId },
-        {
-          $set: { walletBalance: user.walletBalance },
-          $inc: { exposure: -toNum(bet.stake) },
-        }
-      );
+      const updateOps = {
+        $inc: { exposure: -toNum(bet.stake) }, // always decrease exposure
+      };
+
+      // If win/draw, credit balance
+      if (creditAmount > 0) {
+        updateOps.$inc.walletBalance = creditAmount;
+      }
+
+      await User.updateOne({ _id: userId }, updateOps);
 
       /* -----------------------------------------------
        💾 Transaction Record
       ----------------------------------------------- */
+      const updatedUser = await User.findById(userId).select(
+        "walletBalance exposure"
+      );
+
       await Transaction.create({
         user: userId,
         type: txnType,
@@ -223,7 +239,7 @@ export const publishResult = async (req, res) => {
           matchName: match.title,
           side: bet.team,
         },
-        balanceAfter: user.walletBalance,
+        balanceAfter: updatedUser.walletBalance,
       });
 
       await bet.save();
@@ -231,7 +247,7 @@ export const publishResult = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "✅ Result settled successfully (Exposure updated)",
+      message: "✅ Result settled successfully (BAL & EXP updated)",
     });
   } catch (err) {
     console.error("❌ publishResult error:", err);
