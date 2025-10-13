@@ -230,6 +230,11 @@ export const publishResult = async (req, res) => {
       /* -----------------------------------------------
        💾 Transaction Record
       ----------------------------------------------- */
+      const matchName =
+  match.matchName ||
+  match.title ||
+  `${match.teamA || "Team A"} Vs ${match.teamB || "Team B"}`;
+  
       await Transaction.create({
         user: userId,
         type: txnType,
