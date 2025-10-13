@@ -164,6 +164,14 @@ export const publishResult = async (req, res) => {
       return res.status(404).json({ message: "Match not found" });
 
     const resultNorm = String(result || "").trim().toLowerCase();
+    console.log("🟡 BEFORE:", {
+  name: user.name,
+  bal: user.walletBalance,
+  exp: user.exposure,
+  stake: bet.stake,
+  credit: creditAmount,
+  txnType,
+});
 
     // ✅ Update Match
     match.result = result;
@@ -227,6 +235,11 @@ if (creditValue > 0) {
 }
 
 await currentUser.save(); // commit to DB
+console.log("🟢 AFTER SAVE:", {
+  name: user.name,
+  bal: user.walletBalance,
+  exp: user.exposure,
+});
       /* -----------------------------------------------
        💾 Transaction Record
       ----------------------------------------------- */
