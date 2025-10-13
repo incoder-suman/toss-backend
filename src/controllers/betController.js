@@ -33,40 +33,53 @@ export const placeBet = async (req, res, next) => {
     if (!["UPCOMING", "LIVE"].includes(status))
       return res.status(400).json({ message: "Betting closed for this match" });
 
-    // ✅ Min/Max validation
-    if (match.minBet && stakeAmount < match.minBet)
-      return res
-        .status(400)
-        .json({ message: `Minimum bet is ₹${match.minBet}` });
+    // ✅ Min/Max validation (if defined on match)
+    if (typeof match.minBet === "number" && stakeAmount < match.minBet) {
+      return res.status(400).json({ message: `Minimum bet is ₹${match.minBet}` });
+    }
+    if (typeof match.maxBet === "number" && stakeAmount > match.maxBet) {
+      return res.status(400).json({ message: `Maximum bet is ₹${match.maxBet}` });
+    }
 
-    if (match.maxBet && stakeAmount > match.maxBet)
-      return res
-        .status(400)
-        .json({ message: `Maximum bet is ₹${match.maxBet}` });
-
-    // ✅ Normalize side
+    // ✅ Side/team normalization
     const sideNorm = norm(side);
-    const [a, b] = String(match.title || "")
-      .split(/vs/i)
-      .map((s) => norm(s));
-    const teams = [
-      { full: a, short: a?.slice(0, 3) },
-      { full: b, short: b?.slice(0, 3) },
-    ];
+    let teams;
+
+    if (Array.isArray(match.teams) && match.teams.length === 2) {
+      teams = match.teams.map((t) => ({
+        full: norm(t.full),
+        short: norm(t.short || t.full?.slice(0, 3)),
+      }));
+    } else {
+      // Fallback from title "A vs B"
+      const [a, b] = String(match.title || "")
+        .split(/vs/i)
+        .map((s) => norm(s));
+      teams = [
+        { full: a, short: a?.slice(0, 3) },
+        { full: b, short: b?.slice(0, 3) },
+      ];
+    }
 
     const validSides = new Set([
       teams[0].full,
       teams[1].full,
       teams[0].short,
       teams[1].short,
+      teams[0].full?.slice(0, 3),
+      teams[1].full?.slice(0, 3),
     ]);
-    if (!validSides.has(sideNorm))
-      return res
-        .status(400)
-        .json({ message: `Invalid team side selected.` });
+    if (!validSides.has(sideNorm)) {
+      const readable = teams
+        .map((t) => `${(t.full || "").toUpperCase()} (${(t.short || "").toUpperCase()})`)
+        .join(" or ");
+      return res.status(400).json({ message: `Invalid team. Valid: ${readable}` });
+    }
 
     const picked =
-      [teams[0].full, teams[0].short].includes(sideNorm) ? teams[0] : teams[1];
+      [teams[0].full, teams[0].short, teams[0].full?.slice(0, 3)].includes(sideNorm)
+        ? teams[0]
+        : teams[1];
 
     // ✅ Atomic: BAL -, EXP +
     const user = await User.findOneAndUpdate(
@@ -78,38 +91,49 @@ export const placeBet = async (req, res, next) => {
       { $inc: { walletBalance: -stakeAmount, exposure: stakeAmount } },
       { new: true }
     );
-    if (!user)
+
+    if (!user) {
       return res
         .status(400)
         .json({ message: "Insufficient balance or user blocked" });
+    }
 
     // 💾 Transaction: BET_STAKE
     await Transaction.create({
       user: user._id,
       type: "BET_STAKE",
       amount: -stakeAmount,
-      meta: { matchId, matchName: match.title, side: picked.full },
+      meta: {
+        matchId,
+        matchName: match.title,
+        side: picked.full,
+      },
       balanceAfter: user.walletBalance,
     });
 
-    // ✅ Calculate odds (default 1.98)
+    // ✅ Odds resolve (try UPPER keys + fallbacks); default = 1.98
+    const pickedUpper = String(picked.full || "").toUpperCase();
+    const shortUpper = String(picked.short || "").toUpperCase();
+
     const odds =
-      toNum(match.odds?.[picked.full?.toUpperCase()]) ||
-      toNum(match.odds?.[picked.short?.toUpperCase()]) ||
+      toNum(match.odds?.[shortUpper]) ||
+      toNum(match.odds?.[pickedUpper]) ||
+      toNum(match.odds?.[picked.short]) ||
       1.98;
+
     const potentialWin = Math.round(stakeAmount * odds * 100) / 100;
 
-    // ✅ Create bet
+    // ✅ Create Bet
     const bet = await Bet.create({
       user: user._id,
       match: match._id,
-      team: picked.full,
+      team: picked.full, // stored as normalized lower-case full
       stake: stakeAmount,
       potentialWin,
       status: "PENDING",
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "✅ Bet placed successfully",
       bet,
       walletBalance: user.walletBalance,
@@ -122,27 +146,39 @@ export const placeBet = async (req, res, next) => {
 };
 
 /* -------------------------------------------------------
- 🏆 PUBLISH RESULT — EXP ↓, BAL ↑ on win/refund
+ 🏆 PUBLISH RESULT — EXP ↓, BAL update (WIN/LOSS/DRAW)
 ------------------------------------------------------- */
 export const publishResult = async (req, res) => {
   try {
     const { matchId, result } = req.body;
-    if (!matchId || !result)
-      return res.status(400).json({ message: "Match ID and result required" });
 
+    if (!matchId || !result) {
+      return res
+        .status(400)
+        .json({ message: "Match ID and result required" });
+    }
+
+    // ✅ Find Match
     const match = await Match.findById(matchId);
-    if (!match) return res.status(404).json({ message: "Match not found" });
+    if (!match)
+      return res.status(404).json({ message: "Match not found" });
 
-    const resultNorm = norm(result);
+    const resultNorm = String(result || "").trim().toLowerCase();
 
+    // ✅ Update Match
     match.result = result;
     match.status = "COMPLETED";
     await match.save();
 
+    // ✅ Fetch all Bets for this Match
     const bets = await Bet.find({ match: matchId });
     if (!bets.length)
-      return res.json({ success: false, message: "No bets for this match" });
+      return res.json({
+        success: false,
+        message: "No bets found for this match",
+      });
 
+    // ✅ Loop through each bet and settle it
     for (const bet of bets) {
       const userId = bet.user;
       const user = await User.findById(userId);
@@ -150,52 +186,50 @@ export const publishResult = async (req, res) => {
 
       let txnType = "BET_LOST";
       let creditAmount = 0;
+      const betTeam = String(bet.team || "").trim().toLowerCase();
 
-      const betTeam = norm(bet.team);
-
-      // 🟡 DRAW
+      /* -----------------------------------------------
+       🟢 WIN / 🟡 DRAW / 🔴 LOSS Handling
+      ----------------------------------------------- */
       if (resultNorm === "draw") {
+        // 🟡 DRAW — refund stake
         creditAmount = toNum(bet.stake);
         txnType = "REVERSAL";
         bet.status = "REFUNDED";
         bet.winAmount = 0;
-      }
-      // 🟢 WIN
-      else if (betTeam === resultNorm) {
+      } else if (betTeam === resultNorm) {
+        // 🟢 WIN — pay potentialWin
         creditAmount = toNum(bet.potentialWin);
         txnType = "BET_WIN";
         bet.status = "WON";
         bet.winAmount = creditAmount;
-      }
-      // 🔴 LOSS
-      else {
-        txnType = "BET_LOST";
+      } else {
+        // 🔴 LOSS — no payout
         bet.status = "LOST";
         bet.winAmount = 0;
       }
 
       /* -----------------------------------------------
-       ✅ Atomic Exposure & Balance Update
+       ✅ Atomic Update (Exposure ↓, BAL += if win/refund)
       ----------------------------------------------- */
-      const stakeValue = Number(bet.stake) || 0;
-      const decValue = -Math.abs(stakeValue);
-      const creditValue = creditAmount > 0 ? Number(creditAmount) : 0;
+      const updateOps = {
+        $inc: { exposure: -toNum(bet.stake) }, // always decrease exposure
+      };
 
-      await User.updateOne(
-        { _id: userId },
-        {
-          $inc: {
-            exposure: decValue,
-            ...(creditValue > 0 && { walletBalance: creditValue }),
-          },
-        }
-      );
+      // If win/draw, credit balance
+      if (creditAmount > 0) {
+        updateOps.$inc.walletBalance = creditAmount;
+      }
 
+      await User.updateOne({ _id: userId }, updateOps);
+
+      /* -----------------------------------------------
+       💾 Transaction Record
+      ----------------------------------------------- */
       const updatedUser = await User.findById(userId).select(
         "walletBalance exposure"
       );
 
-      // 💾 Transaction
       await Transaction.create({
         user: userId,
         type: txnType,
@@ -211,13 +245,87 @@ export const publishResult = async (req, res) => {
       await bet.save();
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: "✅ Result settled successfully (BAL & EXP updated)",
     });
   } catch (err) {
     console.error("❌ publishResult error:", err);
     res.status(500).json({ message: err.message });
+  }
+};
+
+
+/* -------------------------------------------------------
+ 📜 LIST ALL BETS
+------------------------------------------------------- */
+export const listBets = async (req, res) => {
+  try {
+    const { page = 1, limit = 50, userId, matchId, status } = req.query;
+    const filter = {};
+
+    if (userId) {
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        filter.user = userId;
+      } else {
+        const user = await User.findOne({
+          $or: [{ email: userId }, { name: userId }],
+        }).select("_id");
+        if (user) filter.user = user._id;
+        else return res.status(404).json({ message: "User not found" });
+      }
+    }
+
+    if (matchId) filter.match = matchId;
+    if (status) filter.status = status;
+
+    const bets = await Bet.find(filter)
+      .populate("user", "name email")
+      .populate("match", "title status result")
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * Number(limit))
+      .limit(Number(limit));
+
+    const total = await Bet.countDocuments(filter);
+
+    const formatted = bets.map((b) => ({
+      _id: b._id,
+      userId: b.user?._id,
+      email: b.user?.email,
+      name: b.user?.name,
+      match: b.match,
+      team: b.team || b.side || "—",
+      stake: b.stake,
+      win: b.winAmount || b.potentialWin || 0,
+      createdAt: b.createdAt,
+      status: b.status,
+    }));
+
+    res.json({ bets: formatted, total });
+  } catch (err) {
+    console.error("❌ listBets error:", err.message);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: err.message });
+  }
+};
+
+/* -------------------------------------------------------
+ 👤 MY BETS (current user)
+------------------------------------------------------- */
+export const myBets = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized user" });
+
+    const bets = await Bet.find({ user: userId })
+      .populate("match", "title status result startAt")
+      .sort({ createdAt: -1 });
+
+    res.json(bets);
+  } catch (err) {
+    console.error("❌ myBets error:", err);
+    next(err);
   }
 };
 
@@ -231,42 +339,39 @@ export const cancelBet = async (req, res) => {
 
     const bet = await Bet.findById(betId);
     if (!bet) return res.status(404).json({ message: "Bet not found" });
+
     if (String(bet.user) !== String(userId))
-      return res.status(403).json({ message: "Unauthorized" });
+      return res.status(403).json({ message: "Unauthorized cancel attempt" });
+
     if (bet.status !== "PENDING")
       return res.status(400).json({ message: "Bet already settled" });
 
-    const stakeValue = toNum(bet.stake);
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    await User.updateOne(
-      { _id: userId },
-      {
-        $inc: { walletBalance: stakeValue, exposure: -stakeValue },
-      }
-    );
-
-    const updatedUser = await User.findById(userId).select(
-      "walletBalance exposure"
-    );
+    // Refund stake + reduce exposure
+    user.walletBalance += toNum(bet.stake);
+    user.exposure = Math.max(toNum(user.exposure) - toNum(bet.stake), 0);
+    await user.save();
 
     await Transaction.create({
-      user: userId,
+      user: user._id,
       type: "REVERSAL",
-      amount: stakeValue,
+      amount: toNum(bet.stake),
       meta: {
         matchId: bet.match,
         note: "Bet cancelled and refunded",
       },
-      balanceAfter: updatedUser.walletBalance,
+      balanceAfter: user.walletBalance,
     });
 
     await Bet.deleteOne({ _id: betId });
 
-    res.json({
+    return res.json({
       success: true,
-      message: "✅ Bet cancelled & refunded successfully",
-      walletBalance: updatedUser.walletBalance,
-      exposure: updatedUser.exposure,
+      message: "✅ Bet cancelled and refunded successfully",
+      walletBalance: user.walletBalance,
+      exposure: user.exposure,
     });
   } catch (err) {
     console.error("❌ cancelBet error:", err);
@@ -275,57 +380,12 @@ export const cancelBet = async (req, res) => {
 };
 
 /* -------------------------------------------------------
- 📜 LIST ALL BETS
-------------------------------------------------------- */
-export const listBets = async (req, res) => {
-  try {
-    const { page = 1, limit = 50, userId, matchId, status } = req.query;
-    const filter = {};
-    if (userId) filter.user = userId;
-    if (matchId) filter.match = matchId;
-    if (status) filter.status = status;
-
-    const bets = await Bet.find(filter)
-      .populate("user", "name email")
-      .populate("match", "title status result")
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * Number(limit))
-      .limit(Number(limit));
-
-    const total = await Bet.countDocuments(filter);
-    res.json({ bets, total });
-  } catch (err) {
-    console.error("❌ listBets error:", err);
-    res.status(500).json({ message: err.message });
-  }
-};
-
-/* -------------------------------------------------------
- 👤 MY BETS (current user)
-------------------------------------------------------- */
-export const myBets = async (req, res, next) => {
-  try {
-    const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
-    const bets = await Bet.find({ user: userId })
-      .populate("match", "title status result startAt")
-      .sort({ createdAt: -1 });
-    res.json(bets);
-  } catch (err) {
-    console.error("❌ myBets error:", err);
-    next(err);
-  }
-};
-
-/* -------------------------------------------------------
- 🕹️ TOSS HISTORY (completed/settled)
+ 🕹️ TOSS HISTORY (completed/settled only)
 ------------------------------------------------------- */
 export const tossHistory = async (req, res) => {
   try {
     const userId = req.user?.id;
-    if (!userId)
-      return res.status(401).json({ message: "Unauthorized user" });
+    if (!userId) return res.status(401).json({ message: "Unauthorized user" });
 
     const bets = await Bet.find({ user: userId })
       .populate("match", "title status result")
@@ -335,7 +395,7 @@ export const tossHistory = async (req, res) => {
       (b) =>
         b.match &&
         (b.match.result ||
-          ["completed", "finished", "closed"].includes(
+          ["completed", "finished", "result_declared", "closed"].includes(
             String(b.match.status).toLowerCase()
           ))
     );
