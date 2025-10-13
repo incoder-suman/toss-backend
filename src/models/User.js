@@ -3,9 +3,15 @@ import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },
-    email: { type: String, required: false, lowercase: true, default: "" },
-    password: { type: String, required: true, select: true },
+    name: { type: String, required: true, trim: true },
+    email: {
+      type: String,
+      required: false,
+      lowercase: true,
+      trim: true,
+      default: "",
+    },
+    password: { type: String, required: true, select: false }, // 🔒 select false = hide by default
     role: { type: String, enum: ["user", "admin"], default: "user" },
     isBlocked: { type: Boolean, default: false },
 
@@ -18,11 +24,11 @@ const userSchema = new mongoose.Schema(
 
 /* ------------------------------------------------------------------
  🔐 Password Hashing (Pre-save hook)
- Only hash when password is modified or new
+ Only hash when password is new or modified
 ------------------------------------------------------------------ */
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
   try {
+    if (!this.isModified("password")) return next();
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
     next();
@@ -36,7 +42,10 @@ userSchema.pre("save", async function (next) {
  🧩 Instance Method — Compare Password
 ------------------------------------------------------------------ */
 userSchema.methods.comparePassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
+/* ------------------------------------------------------------------
+ ✅ Export model safely (avoids overwrite in hot reload)
+------------------------------------------------------------------ */
 export default mongoose.models.User || mongoose.model("User", userSchema);
