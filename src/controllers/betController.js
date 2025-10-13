@@ -212,17 +212,21 @@ export const publishResult = async (req, res) => {
       /* -----------------------------------------------
        ✅ Atomic Update (Exposure ↓, BAL += if win/refund)
       ----------------------------------------------- */
-      const updateOps = {
-        $inc: { exposure: -toNum(bet.stake) }, // always decrease exposure
-      };
+      const stakeValue = toNum(bet.stake);
+const creditValue = toNum(creditAmount);
 
-      // If win/draw, credit balance
-      if (creditAmount > 0) {
-        updateOps.$inc.walletBalance = creditAmount;
-      }
+const currentUser = await User.findById(userId);
+if (!currentUser) continue;
 
-      await User.updateOne({ _id: userId }, updateOps);
+// always decrease exposure
+currentUser.exposure = Math.max(toNum(currentUser.exposure) - stakeValue, 0);
 
+// credit wallet only on win/draw
+if (creditValue > 0) {
+  currentUser.walletBalance = toNum(currentUser.walletBalance) + creditValue;
+}
+
+await currentUser.save(); // commit to DB
       /* -----------------------------------------------
        💾 Transaction Record
       ----------------------------------------------- */
