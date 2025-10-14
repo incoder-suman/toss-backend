@@ -5,7 +5,7 @@ import {
   listBets,
   myBets,
   tossHistory,
-  cancelBet, // 👈 add this import
+  cancelBet,
 } from "../controllers/betController.js";
 import { auth } from "../middleware/auth.js";
 
@@ -20,7 +20,7 @@ router.post("/", auth("user"), placeBet);
  ❌ Cancel an existing bet (User)
  (Refund wallet and remove bet)
 ------------------------------------------------------- */
-router.delete("/:id", auth("user"), cancelBet); // 👈 added route
+router.delete("/:id", auth("user"), cancelBet);
 
 /* -------------------------------------------------------
  👤 Get all bets of the logged-in user
