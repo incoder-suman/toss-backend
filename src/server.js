@@ -76,7 +76,7 @@ app.use(
 );
 
 // ✅ Important: Explicitly handle OPTIONS preflight
-app.options("*", (req, res) => {
+app.options("/*", (req, res) => {
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
     res.header("Access-Control-Allow-Origin", origin);
@@ -88,7 +88,6 @@ app.options("*", (req, res) => {
     return res.sendStatus(403);
   }
 });
-
 /* ------------------------------------------------------------------
  🚏 API Routes
 ------------------------------------------------------------------ */
