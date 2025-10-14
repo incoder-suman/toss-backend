@@ -28,25 +28,19 @@ const app = express();
 /* ------------------------------------------------------------------
  🌐 Allowed Origins Setup
 ------------------------------------------------------------------ */
-const defaultOrigins = [
-  "http://localhost:5173", // Local frontend (User)
-  "http://localhost:5174", // Local admin
-  "https://toss-frontend-nine.vercel.app", // Deployed frontend
-  "https://toss-admin.vercel.app", // Deployed admin
+const allowedOrigins = [
+  "http://localhost:5173", // Local user frontend
+  "http://localhost:5174", // Local admin frontend
+  "https://toss-frontend-nine.vercel.app", // ✅ Deployed user panel
+  "https://toss-admin.vercel.app", // ✅ Deployed admin panel
 ];
 
-const envOrigins = (process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
-
-const allowedOrigins = [...new Set([...defaultOrigins, ...envOrigins])];
 console.log("✅ Allowed Origins:", allowedOrigins);
 
 /* ------------------------------------------------------------------
  🧩 Core Middlewares
 ------------------------------------------------------------------ */
-app.set("trust proxy", 1); // For reverse proxies (Render/Vercel)
+app.set("trust proxy", 1); // Required for Render/Vercel HTTPS proxy
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(helmet());
@@ -58,32 +52,41 @@ app.use(compression());
 ------------------------------------------------------------------ */
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow Postman, Curl, or server-side requests with no origin
+    origin: function (origin, callback) {
+      // Allow same-origin, Postman, or server-to-server (no origin header)
       if (!origin) return callback(null, true);
-      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      console.warn(`❌ CORS blocked for origin: ${origin}`);
-      return callback(new Error(`CORS not allowed for ${origin}`));
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        console.warn("❌ Blocked by CORS:", origin);
+        return callback(new Error(`CORS not allowed for ${origin}`));
+      }
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Origin",
+      "X-Requested-With",
+    ],
   })
 );
 
-/* ------------------------------------------------------------------
- ⚙️ Handle Preflight (OPTIONS) Requests
------------------------------------------------------------------- */
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
+// ✅ Important: Explicitly handle OPTIONS preflight
+app.options("*", (req, res) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
     res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
     res.header("Access-Control-Allow-Credentials", "true");
-    return res.sendStatus(204); // No content
+    return res.sendStatus(200);
+  } else {
+    return res.sendStatus(403);
   }
-  next();
 });
 
 /* ------------------------------------------------------------------
@@ -99,14 +102,14 @@ app.use("/api/admin", adminRoutes);
 /* ------------------------------------------------------------------
  ❤️ Health Check Endpoint
 ------------------------------------------------------------------ */
-app.get("/api/health", (req, res) =>
+app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     uptime: process.uptime(),
-    message: "TOSS backend running ✅",
+    message: "✅ Toss backend running",
     timestamp: new Date().toISOString(),
-  })
-);
+  });
+});
 
 /* ------------------------------------------------------------------
  🧱 Serve Static (uploads / assets)
@@ -127,11 +130,11 @@ const MONGO_URI = process.env.MONGO_URI;
 (async () => {
   try {
     await connectDB(MONGO_URI);
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running successfully on port ${PORT}`);
-    });
+    app.listen(PORT, () =>
+      console.log(`🚀 Server running on port ${PORT} (Render Production)`)
+    );
   } catch (err) {
-    console.error("❌ Failed to start server:", err.message);
+    console.error("❌ Server startup failed:", err.message);
     process.exit(1);
   }
 })();
