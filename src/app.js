@@ -26,10 +26,11 @@ app.use(express.json());
 
 // ✅ Allowed origins (from .env or default)
 const defaultOrigins = [
-  "http://localhost:5173",                 // user local
-  "http://localhost:5174",                 // admin local
-  "https://toss-frontend-nine.vercel.app", // live user app
-  "https://toss-admin.vercel.app"          // live admin app
+  "http://localhost:5173", // local frontend (user)
+  "http://localhost:5174", // local admin
+  "https://freindstossbook.com", // live user site
+  "https://www.freindstossbook.com", // www alias
+  "https://admin.freindstossbook.com", // live admin panel
 ];
 
 const allowedOrigins = (process.env.CORS_ORIGIN || "")
@@ -45,21 +46,18 @@ console.log("✅ Allowed Origins:", uniqueOrigins);
 // ✅ CORS middleware
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (mobile apps, Postman, etc.)
+    origin: (origin, callback) => {
+      // Allow Postman, Curl, or server-side requests with no origin
       if (!origin) return callback(null, true);
 
-      // Allow all localhost ports
-      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) {
-        return callback(null, true);
-      }
+      // Allow all local dev URLs (regex)
+      if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
 
-      // Check if origin is in allowed list
-      if (uniqueOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+      // Allow specific production domains
+      if (allowedOrigins.includes(origin)) return callback(null, true);
 
-      console.error(`❌ CORS blocked for origin: ${origin}`);
+      // Block anything else
+      console.warn(`❌ CORS blocked for origin: ${origin}`);
       return callback(new Error(`CORS not allowed for ${origin}`));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -67,7 +65,6 @@ app.use(
     credentials: true,
   })
 );
-
 // ✅ Handle all preflight (OPTIONS) requests globally
 app.options("*", cors());
 
