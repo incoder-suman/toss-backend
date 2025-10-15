@@ -117,7 +117,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 /* ------------------------------------------------------------------
  🚫 404 Fallback — Prevent 'Cannot GET ...'
 ------------------------------------------------------------------ */
-app.all("*", (req, res) => {
+app.all("/*", (req, res) => {
   res.status(404).json({
     success: false,
     message: `Route not found: ${req.originalUrl}`,
