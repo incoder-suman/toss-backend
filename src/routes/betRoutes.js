@@ -26,7 +26,7 @@ router.delete("/:id", auth("user"), cancelBet);
  👤 Get all bets of the logged-in user
  (for user panel - “My Bets”)
 ------------------------------------------------------- */
-router.get("/me", auth("user"), myBets);
+router.get("/my", auth("user"), myBets);
 
 /* -------------------------------------------------------
  🕹️ Toss history (completed matches only)
