@@ -2,7 +2,9 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
-// 🔐 Helper — JWT Signer
+/* ------------------------------------------------------------------
+ 🔐 Helper — JWT Signer
+------------------------------------------------------------------ */
 const signToken = (user) =>
   jwt.sign(
     { id: user._id, role: user.role },
@@ -12,9 +14,6 @@ const signToken = (user) =>
 
 /* ------------------------------------------------------------------
  🧍 REGISTER CONTROLLER
- - Email optional
- - Auto-generates dummy email if missing
- - Hashes password before saving
 ------------------------------------------------------------------ */
 export const register = async (req, res) => {
   try {
@@ -29,8 +28,10 @@ export const register = async (req, res) => {
         : `${Date.now()}_${Math.random().toString(36).substring(2, 8)}@example.com`;
 
     const exists = await User.findOne({ email: safeEmail });
-    if (exists) return res.status(400).json({ message: "Email already in use" });
+    if (exists)
+      return res.status(400).json({ message: "Email already in use" });
 
+    // 🔒 Hash password
     const hash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
@@ -50,16 +51,13 @@ export const register = async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("❌ Register error:", e.message);
+    console.error("❌ Register error:", e);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
 /* ------------------------------------------------------------------
  🔑 LOGIN CONTROLLER
- - Accepts `identifier` (email OR username)
- - Validates password
- - Returns JWT + user object
 ------------------------------------------------------------------ */
 export const login = async (req, res) => {
   try {
@@ -70,23 +68,28 @@ export const login = async (req, res) => {
         message: "User ID or Email and password are required",
       });
 
+    // ✅ Fetch user & include password (because select:false in model)
     const user = await User.findOne({
       $or: [
         { email: identifier.toLowerCase() },
         { name: new RegExp(`^${identifier}$`, "i") },
       ],
-    });
+    }).select("+password"); // 👈 this line fixes 'Illegal arguments' error
 
     if (!user)
-      return res
-        .status(404)
-        .json({ message: "User not found. Please check your credentials." });
+      return res.status(404).json({
+        message: "User not found. Please check your credentials.",
+      });
 
     if (user.isBlocked)
-      return res.status(403).json({ message: "User is blocked. Contact support." });
+      return res
+        .status(403)
+        .json({ message: "User is blocked. Contact support." });
 
+    // ✅ Validate password safely
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) return res.status(400).json({ message: "Invalid password" });
+    if (!validPassword)
+      return res.status(400).json({ message: "Invalid password" });
 
     const token = signToken(user);
 
@@ -102,30 +105,28 @@ export const login = async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("❌ Login error:", e.message);
+    console.error("❌ Login error:", e);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
 /* ------------------------------------------------------------------
  🧩 ME CONTROLLER
- - Returns logged-in user info (without password)
 ------------------------------------------------------------------ */
 export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user)
+      return res.status(404).json({ message: "User not found" });
     res.json({ user });
   } catch (e) {
-    console.error("❌ getMe error:", e.message);
+    console.error("❌ getMe error:", e);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
 /* ------------------------------------------------------------------
  🔐 CHANGE PASSWORD CONTROLLER
- - Requires oldPassword, newPassword
- - Auth middleware (verifyToken) must be active
 ------------------------------------------------------------------ */
 export const changePassword = async (req, res) => {
   try {
@@ -135,8 +136,10 @@ export const changePassword = async (req, res) => {
     if (!userId || !oldPassword || !newPassword)
       return res.status(400).json({ message: "Missing required fields" });
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    // include password since select:false
+    const user = await User.findById(userId).select("+password");
+    if (!user)
+      return res.status(404).json({ message: "User not found" });
 
     const isMatch = await bcrypt.compare(oldPassword, user.password);
     if (!isMatch)
@@ -148,7 +151,7 @@ export const changePassword = async (req, res) => {
 
     res.json({ message: "✅ Password changed successfully" });
   } catch (e) {
-    console.error("❌ changePassword error:", e.message);
+    console.error("❌ changePassword error:", e);
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
