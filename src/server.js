@@ -1,4 +1,4 @@
-// src/server.js
+// ✅ src/server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -7,11 +7,10 @@ import morgan from "morgan";
 import compression from "compression";
 import path from "path";
 import { fileURLToPath } from "url";
-
-import { connectDB } from "./config/db.js";
+import { connectDB } from "./config/db.js"; // ✅ make sure db.js uses: export const connectDB = async () => {}
 import { errorHandler } from "./middleware/errorHandler.js";
 
-// Route imports
+// ✅ Route Imports
 import adminRoutes from "./routes/adminRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
@@ -19,7 +18,9 @@ import matchRoutes from "./routes/matchRoutes.js";
 import betRoutes from "./routes/betRoutes.js";
 import walletRoutes from "./routes/walletRoutes.js";
 
-// Utilities for dirname (ESM)
+/* ------------------------------------------------------------------
+ 🧭 Path Setup (ESM Compatible)
+------------------------------------------------------------------ */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -29,11 +30,11 @@ const app = express();
  🌐 Allowed Origins Setup
 ------------------------------------------------------------------ */
 const defaultOrigins = [
-  "http://localhost:5173", // local frontend (user)
-  "http://localhost:5174", // local admin
-  "https://freindstossbook.com", // live user site
+  "http://localhost:5173", // Local user
+  "http://localhost:5174", // Local admin
+  "https://freindstossbook.com", // Live user
   "https://www.freindstossbook.com", // www alias
-  "https://admin.freindstossbook.com", // live admin panel
+  "https://admin.freindstossbook.com", // Live admin
 ];
 
 const envOrigins = (process.env.CORS_ORIGIN || "")
@@ -47,7 +48,7 @@ console.log("✅ Allowed Origins:", allowedOrigins);
 /* ------------------------------------------------------------------
  🧩 Core Middlewares
 ------------------------------------------------------------------ */
-app.set("trust proxy", 1); // For reverse proxies (Render/Vercel)
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(helmet());
@@ -55,21 +56,14 @@ app.use(morgan("dev"));
 app.use(compression());
 
 /* ------------------------------------------------------------------
- 🛡️ Global CORS Configuration
+ 🛡️ CORS Configuration
 ------------------------------------------------------------------ */
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow Postman, Curl, or server-side requests with no origin
-      if (!origin) return callback(null, true);
-
-      // Allow all local dev URLs (regex)
+      if (!origin) return callback(null, true); // allow Postman / server-side
       if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
-
-      // Allow specific production domains
       if (allowedOrigins.includes(origin)) return callback(null, true);
-
-      // Block anything else
       console.warn(`❌ CORS blocked for origin: ${origin}`);
       return callback(new Error(`CORS not allowed for ${origin}`));
     },
@@ -80,7 +74,7 @@ app.use(
 );
 
 /* ------------------------------------------------------------------
- ⚙️ Handle Preflight (OPTIONS) Requests
+ ⚙️ Handle Preflight Requests (OPTIONS)
 ------------------------------------------------------------------ */
 app.use((req, res, next) => {
   if (req.method === "OPTIONS") {
@@ -88,7 +82,7 @@ app.use((req, res, next) => {
     res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.header("Access-Control-Allow-Credentials", "true");
-    return res.sendStatus(204); // No content
+    return res.sendStatus(204);
   }
   next();
 });
@@ -104,7 +98,7 @@ app.use("/api/wallet", walletRoutes);
 app.use("/api/admin", adminRoutes);
 
 /* ------------------------------------------------------------------
- ❤️ Health Check Endpoint
+ ❤️ Health Check
 ------------------------------------------------------------------ */
 app.get("/api/health", (req, res) =>
   res.json({
@@ -116,9 +110,19 @@ app.get("/api/health", (req, res) =>
 );
 
 /* ------------------------------------------------------------------
- 🧱 Serve Static (uploads / assets)
+ 🧱 Static Files (uploads / assets)
 ------------------------------------------------------------------ */
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+/* ------------------------------------------------------------------
+ 🚫 404 Fallback — Prevent 'Cannot GET ...'
+------------------------------------------------------------------ */
+app.all("*", (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: `Route not found: ${req.originalUrl}`,
+  });
+});
 
 /* ------------------------------------------------------------------
  ⚠️ Global Error Handler
