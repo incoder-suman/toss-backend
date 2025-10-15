@@ -96,7 +96,7 @@ export const updateMatch = async (req, res, next) => {
 /* -------------------------------------------------------
  ⚙️ UPDATE MATCH STATUS
 ------------------------------------------------------- */
-export const updateMatchStatus = async (req, res, next) => {
+export const updateMatchStatus = async (req, res) => {
   try {
     const { status } = req.body;
     const valid = ["UPCOMING", "LIVE", "LOCKED", "COMPLETED", "CANCELLED"];
@@ -124,6 +124,9 @@ export const updateMatchStatus = async (req, res, next) => {
 /* -------------------------------------------------------
  🏁 PUBLISH or UPDATE RESULT (Admin)
 ------------------------------------------------------- */
+/* -------------------------------------------------------
+ 🏁 PUBLISH or UPDATE RESULT (Admin)
+------------------------------------------------------- */
 export const publishOrUpdateResult = async (req, res) => {
   try {
     const { id } = req.params;
@@ -133,6 +136,11 @@ export const publishOrUpdateResult = async (req, res) => {
 
     const match = await Match.findById(id);
     if (!match) return res.status(404).json({ message: "Match not found" });
+
+    // ✅ Get readable match title
+    const shortNameA = match?.teams?.[0]?.short || match?.teams?.[0]?.full || "TeamA";
+    const shortNameB = match?.teams?.[1]?.short || match?.teams?.[1]?.full || "TeamB";
+    const matchTitle = `${shortNameA} Vs ${shortNameB}`;
 
     const normalizedResult = norm(result);
     let teams;
@@ -169,7 +177,9 @@ export const publishOrUpdateResult = async (req, res) => {
       });
     }
 
-    /* Reverse old settlement if any */
+    /* ----------------------------------------------------
+       🧹 Reverse old settlement if any
+    ---------------------------------------------------- */
     const hadResultBefore =
       !!match.result && !["PENDING", "DRAW"].includes(match.result);
 
@@ -192,7 +202,12 @@ export const publishOrUpdateResult = async (req, res) => {
             user: user._id,
             type: "REVERSAL",
             amount: -Math.abs(b.winAmount),
-            meta: { matchId: id, reason: "Undo previous WIN", betId: b._id },
+            meta: {
+              matchId: id,
+              matchName: matchTitle, // ✅ added
+              reason: "Undo previous WIN",
+              betId: b._id,
+            },
             balanceAfter: user.walletBalance,
           });
         } else if (b.status === "REFUNDED") {
@@ -204,7 +219,12 @@ export const publishOrUpdateResult = async (req, res) => {
             user: user._id,
             type: "REVERSAL",
             amount: -refund,
-            meta: { matchId: id, reason: "Undo previous REFUND", betId: b._id },
+            meta: {
+              matchId: id,
+              matchName: matchTitle, // ✅ added
+              reason: "Undo previous REFUND",
+              betId: b._id,
+            },
             balanceAfter: user.walletBalance,
           });
         }
@@ -218,7 +238,9 @@ export const publishOrUpdateResult = async (req, res) => {
       console.log(`🔄 Reversed previous settlements: ${reversed}`);
     }
 
-    /* Apply the new result & settle */
+    /* ----------------------------------------------------
+       🏁 Apply new result and settle
+    ---------------------------------------------------- */
     match.result = winner;
     match.status = "COMPLETED";
     await match.save();
@@ -242,7 +264,12 @@ export const publishOrUpdateResult = async (req, res) => {
           user: user._id,
           type: "REVERSAL",
           amount: refund,
-          meta: { matchId: id, reason: "Match DRAW refund", betId: b._id },
+          meta: {
+            matchId: id,
+            matchName: matchTitle, // ✅ added
+            reason: "Match DRAW refund",
+            betId: b._id,
+          },
           balanceAfter: user.walletBalance,
         });
       } else {
@@ -259,7 +286,13 @@ export const publishOrUpdateResult = async (req, res) => {
             user: user._id,
             type: "BET_WIN",
             amount: credit,
-            meta: { matchId: id, betId: b._id },
+            meta: {
+              matchId: id,
+              matchName: matchTitle, // ✅ added
+              team: b.team,
+              result: "WIN",
+              betId: b._id,
+            },
             balanceAfter: user.walletBalance,
           });
         } else {
@@ -280,11 +313,10 @@ export const publishOrUpdateResult = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ publishOrUpdateResult error:", err?.message || err);
-    res
-      .status(500)
-      .json({
-        message: "Internal Server Error",
-        error: err?.message || String(err),
-      });
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: err?.message || String(err),
+    });
   }
 };
+
