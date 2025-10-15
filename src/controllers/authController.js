@@ -32,15 +32,14 @@ export const register = async (req, res) => {
       return res.status(400).json({ message: "Email already in use" });
 
     // 🔒 Hash password
-const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 10);
 
-// ✅ Always store lowercase to make login case-insensitive
-const user = await User.create({
-  name: name.trim().toLowerCase(),
-  email: safeEmail.toLowerCase(),
-  password: hash,
-  role: role || "user",
-});
+    const user = await User.create({
+      name: name.trim(),
+      email: safeEmail,
+      password: hash,
+      role: role || "user",
+    });
 
     return res.status(201).json({
       message: "✅ User registered successfully",
@@ -96,44 +95,31 @@ export const login = async (req, res) => {
         .json({ message: "User is blocked. Contact support." });
     }
 
-  // ✅ Validate password safely (supports both hashed & old plain-text users)
-let validPassword = false;
-const entered = String(password || "").trim();
-const stored = String(user.password || "");
+    // ✅ Validate password safely
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(400).json({ message: "Invalid password" });
+    }
 
-// If user password already hashed ($2 prefix = bcrypt)
-if (stored.startsWith("$2")) {
-  validPassword = await bcrypt.compare(entered, stored);
-} else {
-  // Old plain-text record (legacy user)
-  validPassword = entered === stored;
-  if (validPassword) {
-    // ✅ Auto-migrate to hashed on first successful login
-    user.password = await bcrypt.hash(entered, 10);
-    await user.save();
+    const token = signToken(user);
+
+    // ✅ Send response
+    return res.json({
+      message: "✅ Login successful",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        walletBalance: user.walletBalance || 0,
+      },
+    });
+  } catch (e) {
+    console.error("❌ Login error:", e);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
-}
-
-// ❌ Wrong password
-if (!validPassword) {
-  return res.status(400).json({ message: "Invalid password" });
-}
-
-// ✅ Issue token and respond
-const token = signToken(user);
-
-return res.json({
-  message: "✅ Login successful",
-  token,
-  user: {
-    id: user._id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    walletBalance: user.walletBalance || 0,
-  },
-});
-
+};
 
 /* ------------------------------------------------------------------
  🧩 ME CONTROLLER
