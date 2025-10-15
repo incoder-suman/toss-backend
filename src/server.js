@@ -62,8 +62,14 @@ app.use(
     origin: (origin, callback) => {
       // Allow Postman, Curl, or server-side requests with no origin
       if (!origin) return callback(null, true);
+
+      // Allow all local dev URLs (regex)
       if (/^http:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+
+      // Allow specific production domains
       if (allowedOrigins.includes(origin)) return callback(null, true);
+
+      // Block anything else
       console.warn(`❌ CORS blocked for origin: ${origin}`);
       return callback(new Error(`CORS not allowed for ${origin}`));
     },
