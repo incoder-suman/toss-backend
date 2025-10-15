@@ -149,10 +149,7 @@ export const updateMatchStatus = async (req, res, next) => {
           },
           balanceAfter: user.walletBalance,
         });
-
-        console.log("🟡 MATCH DATA:", match);
-console.log("🟡 TEAMS:", match?.teams);
-console.log("🟡 TITLE:", match?.title);
+        
         refunds++;
       }
 
@@ -241,6 +238,7 @@ export const publishOrUpdateResult = async (req, res) => {
           user.walletBalance -= Math.abs(b.winAmount);
           await user.save();
           reversed++;
+          console.log("🟢 Refund for:", matchTitle);
           await Transaction.create({
             user: user._id,
             type: "REVERSAL",
