@@ -61,38 +61,49 @@ export const register = async (req, res) => {
 ------------------------------------------------------------------ */
 export const login = async (req, res) => {
   try {
-    const { identifier, password } = req.body;
+    const { identifier, email, password } = req.body;
 
-    if (!identifier || !password)
+    // ✅ Accept either identifier OR email
+    if ((!identifier && !email) || !password) {
       return res.status(400).json({
         message: "User ID or Email and password are required",
       });
+    }
 
-    // ✅ Fetch user & include password (because select:false in model)
-    const user = await User.findOne({
-      $or: [
-        { email: identifier.toLowerCase() },
-        { name: new RegExp(`^${identifier}$`, "i") },
-      ],
-    }).select("+password"); // 👈 this line fixes 'Illegal arguments' error
+    // ✅ Build query dynamically
+    const query = identifier
+      ? {
+          $or: [
+            { email: identifier.toLowerCase() },
+            { name: new RegExp(`^${identifier}$`, "i") },
+          ],
+        }
+      : { email: email.toLowerCase() };
 
-    if (!user)
+    // ✅ Fetch user & include password (select:false in schema)
+    const user = await User.findOne(query).select("+password");
+
+    if (!user) {
       return res.status(404).json({
         message: "User not found. Please check your credentials.",
       });
+    }
 
-    if (user.isBlocked)
+    if (user.isBlocked) {
       return res
         .status(403)
         .json({ message: "User is blocked. Contact support." });
+    }
 
     // ✅ Validate password safely
     const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword)
+    if (!validPassword) {
       return res.status(400).json({ message: "Invalid password" });
+    }
 
     const token = signToken(user);
 
+    // ✅ Send response
     return res.json({
       message: "✅ Login successful",
       token,
