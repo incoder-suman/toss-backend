@@ -92,7 +92,7 @@ export const withdraw = async (req, res) => {
     const txn = await Transaction.create({
       user: user._id,
       type: "WITHDRAW",
-      amount: -toNum(amount), // negative for clarity
+      amount: toNum(amount), // negative for clarity
       meta: {
         withdrawnBy: actorId,
         note: note || "Money withdrawn from wallet",

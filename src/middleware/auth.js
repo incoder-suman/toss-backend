@@ -19,7 +19,10 @@ export const auth = (roles = []) => {
       const token = header.startsWith("Bearer ") ? header.split(" ")[1] : null;
 
       if (!token) {
-        return res.status(401).json({ success: false, message: "Unauthorized — Token missing" });
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized — Token missing",
+        });
       }
 
       // ✅ Verify JWT
@@ -27,24 +30,38 @@ export const auth = (roles = []) => {
       const payload = jwt.verify(token, secret);
 
       if (!payload?.id) {
-        return res.status(401).json({ success: false, message: "Invalid token payload" });
+        return res.status(401).json({
+          success: false,
+          message: "Invalid token payload",
+        });
       }
 
-      // ✅ Attach to req.user
+      // ✅ Attach payload to req.user
       req.user = {
         id: payload.id,
         role: payload.role || "user",
+        name: payload.name || null,
+        email: payload.email || null,
       };
 
-      // ✅ Role restriction check (if provided)
+      // ✅ Optional role restriction
       if (roles.length > 0 && !roles.includes(req.user.role)) {
-        return res.status(403).json({ success: false, message: "Forbidden — Insufficient privileges" });
+        console.warn(
+          `🚫 Access denied: ${req.user.role} tried to access restricted route (${roles.join(",")})`
+        );
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden — Admins only or insufficient privileges",
+        });
       }
 
       next();
     } catch (err) {
       console.error("❌ Auth middleware error:", err.message);
-      return res.status(401).json({ success: false, message: "Invalid or expired token" });
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized — Invalid or expired token",
+      });
     }
   };
 };
