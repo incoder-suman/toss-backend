@@ -29,10 +29,11 @@ const app = express();
  🌐 Allowed Origins Setup
 ------------------------------------------------------------------ */
 const defaultOrigins = [
-  "http://localhost:5173", // Local frontend (User)
-  "http://localhost:5174", // Local admin
-  "https://toss-frontend-nine.vercel.app", // Deployed frontend
-  "https://toss-admin.vercel.app", // Deployed admin
+  "http://localhost:5173", // local frontend (user)
+  "http://localhost:5174", // local admin
+  "https://freindstossbook.com", // live user site
+  "https://www.freindstossbook.com", // www alias
+  "https://admin.freindstossbook.com", // live admin panel
 ];
 
 const envOrigins = (process.env.CORS_ORIGIN || "")
