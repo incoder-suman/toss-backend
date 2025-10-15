@@ -32,14 +32,15 @@ export const register = async (req, res) => {
       return res.status(400).json({ message: "Email already in use" });
 
     // 🔒 Hash password
-    const hash = await bcrypt.hash(password, 10);
+const hash = await bcrypt.hash(password, 10);
 
-    const user = await User.create({
-      name: name.trim(),
-      email: safeEmail,
-      password: hash,
-      role: role || "user",
-    });
+// ✅ Always store lowercase to make login case-insensitive
+const user = await User.create({
+  name: name.trim().toLowerCase(),
+  email: safeEmail.toLowerCase(),
+  password: hash,
+  role: role || "user",
+});
 
     return res.status(201).json({
       message: "✅ User registered successfully",
