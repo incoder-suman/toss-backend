@@ -309,18 +309,34 @@ export const cancelBet = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    // ✅ NEW: fetch match details for proper wallet display
+    const match = await Match.findById(bet.match);
+    const shortA =
+      typeof match?.teams?.[0] === "object"
+        ? match.teams[0].short || match.teams[0].full
+        : match?.teams?.[0];
+    const shortB =
+      typeof match?.teams?.[1] === "object"
+        ? match.teams[1].short || match.teams[1].full
+        : match?.teams?.[1];
+    const matchTitle = `${shortA || "TeamA"} Vs ${shortB || "TeamB"}`;
+
     // 💰 Refund stake
     const refund = toNum(bet.stake);
     user.walletBalance += refund;
     user.exposure = Math.max(toNum(user.exposure) - refund, 0);
     await user.save();
 
-    // 🧾 Transaction
+    // 🧾 Transaction (existing logic preserved)
     await Transaction.create({
       user: user._id,
       type: "REVERSAL",
       amount: refund,
-      meta: { matchId: bet.match, note: "Bet cancelled and refunded" },
+      meta: {
+        matchId: bet.match,
+        matchName: matchTitle, // ✅ added line (for wallet history)
+        note: "Bet cancelled and refunded",
+      },
       balanceAfter: user.walletBalance,
     });
 
