@@ -96,31 +96,27 @@ export const login = async (req, res) => {
         .json({ message: "User is blocked. Contact support." });
     }
 
-    // ✅ Validate password safely
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(400).json({ message: "Invalid password" });
-    }
+   // ✅ Validate password safely
+const validPassword = await bcrypt.compare(password, user.password);
+if (!validPassword) {
+  return res.status(400).json({ message: "Invalid password" });
+}
 
-    const token = signToken(user);
+const token = signToken(user);
 
-    // ✅ Send response
-    return res.json({
-      message: "✅ Login successful",
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        walletBalance: user.walletBalance || 0,
-      },
-    });
-  } catch (e) {
-    console.error("❌ Login error:", e);
-    return res.status(500).json({ message: "Internal Server Error" });
-  }
-};
+// ✅ Send response
+return res.json({
+  message: "✅ Login successful",
+  token,
+  user: {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    walletBalance: user.walletBalance || 0,
+  },
+});
+
 
 /* ------------------------------------------------------------------
  🧩 ME CONTROLLER
