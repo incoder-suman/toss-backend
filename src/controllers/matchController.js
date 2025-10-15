@@ -96,7 +96,7 @@ export const updateMatch = async (req, res, next) => {
 /* -------------------------------------------------------
  ⚙️ UPDATE MATCH STATUS
 ------------------------------------------------------- */
-export const updateMatchStatus = async (req, res) => {
+export const updateMatchStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
     const valid = ["UPCOMING", "LIVE", "LOCKED", "COMPLETED", "CANCELLED"];
@@ -115,15 +115,55 @@ export const updateMatchStatus = async (req, res) => {
     if (["UPCOMING", "LIVE"].includes(status)) match.result = "PENDING";
     await match.save();
 
+    /* ✅ NEW ADDITION — Refund logic if match is CANCELLED */
+    if (status === "CANCELLED") {
+      const bets = await Bet.find({ match: match._id, status: "PENDING" });
+      const shortA = match?.teams?.[0]?.short || match?.teams?.[0]?.full || "TeamA";
+      const shortB = match?.teams?.[1]?.short || match?.teams?.[1]?.full || "TeamB";
+      const matchTitle = `${shortA} Vs ${shortB}`;
+      let refunds = 0;
+
+      for (const b of bets) {
+        const user = await User.findById(b.user);
+        if (!user) continue;
+
+        // 💰 Return bet stake to wallet
+        user.walletBalance += b.stake;
+        user.exposure -= b.stake;
+        await user.save();
+
+        // 🧾 Update bet status
+        b.status = "REFUNDED";
+        await b.save();
+
+        // 🧠 Record transaction for wallet history
+        await Transaction.create({
+          user: user._id,
+          type: "REVERSAL",
+          amount: b.stake,
+          meta: {
+            matchId: match._id,
+            matchName: matchTitle,  // ✅ show name in wallet history
+            reason: "Match cancelled refund",
+            betId: b._id,
+          },
+          balanceAfter: user.walletBalance,
+        });
+
+        refunds++;
+      }
+
+      console.log(`♻️ Refunded ${refunds} bets due to match cancellation`);
+    }
+
+    // ⚡ Existing unchanged response
     res.json({ message: `✅ Match status set to ${status}`, match });
   } catch (err) {
     next(err);
   }
 };
 
-/* -------------------------------------------------------
- 🏁 PUBLISH or UPDATE RESULT (Admin)
-------------------------------------------------------- */
+
 /* -------------------------------------------------------
  🏁 PUBLISH or UPDATE RESULT (Admin)
 ------------------------------------------------------- */
