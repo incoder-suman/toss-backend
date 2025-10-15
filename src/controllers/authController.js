@@ -95,11 +95,27 @@ export const login = async (req, res) => {
         .json({ message: "User is blocked. Contact support." });
     }
 
-    // ✅ Validate password safely
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword) {
-      return res.status(400).json({ message: "Invalid password" });
-    }
+    // ✅ Validate password safely (also handles old plain-text users)
+let validPassword = false;
+const entered = String(password || "").trim();
+const stored = String(user.password || "");
+
+if (stored.startsWith("$2")) {
+  // already hashed → normal compare
+  validPassword = await bcrypt.compare(entered, stored);
+} else {
+  // old plain-text → allow once then auto-hash
+  validPassword = entered === stored;
+  if (validPassword) {
+    user.password = await bcrypt.hash(entered, 10);
+    await user.save();
+  }
+}
+
+if (!validPassword) {
+  return res.status(400).json({ message: "Invalid password" });
+}
+
 
     const token = signToken(user);
 
