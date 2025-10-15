@@ -2,41 +2,16 @@ import mongoose from "mongoose";
 
 const betSchema = new mongoose.Schema(
   {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-    match: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Match",
-      required: true,
-    },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    match: { type: mongoose.Schema.Types.ObjectId, ref: "Match", required: true },
 
-    // ✅ new unified team field (store team name or side)
-    team: { type: String, trim: true },
+    team: { type: String, trim: true },  // unified team
+    side: { type: String, trim: true },  // backward compat
 
-    // 🧩 backward compatibility (some old data used side)
-    side: { type: String, trim: true },
+    stake: { type: Number, required: true, min: 1 },
+    potentialWin: { type: Number, required: true, min: 0 },
 
-    stake: {
-      type: Number,
-      required: true,
-      min: 1,
-    },
-    potentialWin: {
-      type: Number,
-      required: true,
-      min: 0,
-    },
-
-    // ✅ added for settlements
-    winAmount: {
-      type: Number,
-      default: 0,
-    },
-
-    // ✅ added for draw / refund support
+    winAmount: { type: Number, default: 0 },
     status: {
       type: String,
       enum: ["PENDING", "WON", "LOST", "REFUNDED", "CANCELLED"],
@@ -45,5 +20,11 @@ const betSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+/* 🔎 Optional but recommended indexes (faster admin report) */
+betSchema.index({ createdAt: -1 });
+betSchema.index({ user: 1, createdAt: -1 });
+betSchema.index({ match: 1, createdAt: -1 });
+betSchema.index({ status: 1, createdAt: -1 });
 
 export default mongoose.models.Bet || mongoose.model("Bet", betSchema);

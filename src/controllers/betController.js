@@ -233,36 +233,65 @@ export const publishResult = async (req, res) => {
 ======================================================= */
 export const listBets = async (req, res) => {
   try {
-    const { page = 1, limit = 50, userId, matchId, status } = req.query;
+    const page  = Math.max(parseInt(req.query.page)  || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+
+    const { userId, matchId, status, team } = req.query;
     const filter = {};
 
-    // 🔍 Optional filters
+    // 🔍 Optional filters (safe)
     if (userId) {
       if (mongoose.Types.ObjectId.isValid(userId)) {
         filter.user = userId;
       } else {
-        const user = await User.findOne({
-          $or: [{ email: userId }, { name: userId }],
-        }).select("_id");
-        if (!user) return res.status(404).json({ message: "User not found" });
-        filter.user = user._id;
+        const u = await User.findOne({ $or: [{ email: userId }, { name: userId }] })
+          .select("_id");
+        if (!u) return res.status(404).json({ message: "User not found" });
+        filter.user = u._id;
       }
     }
-
     if (matchId) filter.match = matchId;
-    if (status) filter.status = status;
+    if (status)  filter.status = status;
+    if (team)    filter.team   = String(team).toLowerCase();
 
-    // 📄 Paginated list
-    const bets = await Bet.find(filter)
-      .populate("user", "name email")
-      .populate("match", "title status result")
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * Number(limit))
-      .limit(Number(limit));
+    // 📄 Paginated + populated
+    const [items, total] = await Promise.all([
+      Bet.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate({ path: "user",  select: "name email" })
+        .populate({ path: "match", select: "title teams" })
+        .lean(),
+      Bet.countDocuments(filter),
+    ]);
 
-    const total = await Bet.countDocuments(filter);
+    // 🧼 Uniform rows: always include userName/userEmail + readable matchTitle
+    const bets = items.map((b) => {
+      // safe match title (supports teams as objects OR strings)
+      const tA = typeof b.match?.teams?.[0] === "object"
+        ? (b.match.teams[0].short || b.match.teams[0].full)
+        : b.match?.teams?.[0];
+      const tB = typeof b.match?.teams?.[1] === "object"
+        ? (b.match.teams[1].short || b.match.teams[1].full)
+        : b.match?.teams?.[1];
+      const matchTitle = b.match?.title || `${tA || "TeamA"} Vs ${tB || "TeamB"}`;
 
-    return res.json({ bets, total });
+      return {
+        id: b._id,
+        userId: b.user?._id || null,
+        userName: b.user?.name || null,
+        userEmail: b.user?.email || null,
+        matchTitle,
+        team: b.team || b.side || null,
+        stake: b.stake,
+        winAmount: b.winAmount,
+        status: b.status,
+        createdAt: b.createdAt,
+      };
+    });
+
+    return res.json({ success: true, total, page, limit, bets });
   } catch (err) {
     console.error("❌ listBets error:", err);
     res.status(500).json({ message: "Internal Server Error" });
