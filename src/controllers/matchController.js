@@ -150,6 +150,9 @@ export const updateMatchStatus = async (req, res, next) => {
           balanceAfter: user.walletBalance,
         });
 
+        console.log("🟡 MATCH DATA:", match);
+console.log("🟡 TEAMS:", match?.teams);
+console.log("🟡 TITLE:", match?.title);
         refunds++;
       }
 
