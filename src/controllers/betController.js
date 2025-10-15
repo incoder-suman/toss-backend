@@ -281,7 +281,8 @@ export const myBets = async (req, res) => {
       .populate("match", "title status result startAt")
       .sort({ createdAt: -1 });
 
-    return res.json({ bets });
+    // ✅ Return array directly for frontend compatibility
+    return res.json(bets);
   } catch (err) {
     console.error("❌ myBets error:", err);
     res.status(500).json({ message: err.message });
