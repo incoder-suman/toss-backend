@@ -177,9 +177,13 @@ export const publishOrUpdateResult = async (req, res) => {
     const match = await Match.findById(id);
     if (!match) return res.status(404).json({ message: "Match not found" });
 
-    // ✅ Get readable match title
-    const shortNameA = match?.teams?.[0]?.short || match?.teams?.[0]?.full || "TeamA";
-    const shortNameB = match?.teams?.[1]?.short || match?.teams?.[1]?.full || "TeamB";
+    // ✅ Readable match title (supports object/string teams)
+    const shortNameA = (typeof match?.teams?.[0] === "object"
+      ? (match.teams[0].short || match.teams[0].full)
+      : match?.teams?.[0]) || "TeamA";
+    const shortNameB = (typeof match?.teams?.[1] === "object"
+      ? (match.teams[1].short || match.teams[1].full)
+      : match?.teams?.[1]) || "TeamB";
     const matchTitle = `${shortNameA} Vs ${shortNameB}`;
 
     const normalizedResult = norm(result);
@@ -218,7 +222,7 @@ export const publishOrUpdateResult = async (req, res) => {
     }
 
     /* ----------------------------------------------------
-       🧹 Reverse old settlement if any
+       🧹 Reverse old settlement if any (also rebuild EXP)
     ---------------------------------------------------- */
     const hadResultBefore =
       !!match.result && !["PENDING", "DRAW"].includes(match.result);
@@ -234,40 +238,59 @@ export const publishOrUpdateResult = async (req, res) => {
         const user = await User.findById(b.user);
         if (!user) continue;
 
+        const stakeAmt = Number(b.stake || 0);
+
         if (b.status === "WON" && b.winAmount > 0) {
+          // 🧾 undo previous WIN credit
           user.walletBalance -= Math.abs(b.winAmount);
+          // 🔹 EXP REBUILD (back to pending): lock stake again
+          user.exposure = Number(user.exposure || 0) + stakeAmt;
+
           await user.save();
           reversed++;
-          console.log("🟢 Refund for:", matchTitle);
+
           await Transaction.create({
             user: user._id,
             type: "REVERSAL",
             amount: -Math.abs(b.winAmount),
             meta: {
               matchId: id,
-              matchName: matchTitle, // ✅ added
+              matchName: matchTitle,
               reason: "Undo previous WIN",
               betId: b._id,
             },
             balanceAfter: user.walletBalance,
           });
+
         } else if (b.status === "REFUNDED") {
-          const refund = Math.abs(b.stake || 0);
+          // 🧾 undo previous REFUND (take stake back)
+          const refund = stakeAmt;
           user.walletBalance -= refund;
+          // 🔹 EXP REBUILD
+          user.exposure = Number(user.exposure || 0) + stakeAmt;
+
           await user.save();
           reversed++;
+
           await Transaction.create({
             user: user._id,
             type: "REVERSAL",
             amount: -refund,
             meta: {
               matchId: id,
-              matchName: matchTitle, // ✅ added
+              matchName: matchTitle,
               reason: "Undo previous REFUND",
               betId: b._id,
             },
             balanceAfter: user.walletBalance,
           });
+
+        } else if (b.status === "LOST") {
+          // ❌ LOSS had reduced EXP earlier; rebuild it now
+          user.exposure = Number(user.exposure || 0) + stakeAmt;
+          await user.save();
+          reversed++;
+          // (no wallet txn needed)
         }
       }
 
@@ -280,7 +303,7 @@ export const publishOrUpdateResult = async (req, res) => {
     }
 
     /* ----------------------------------------------------
-       🏁 Apply new result and settle
+       🏁 Apply new result and settle (also deduct EXP)
     ---------------------------------------------------- */
     match.result = winner;
     match.status = "COMPLETED";
@@ -293,52 +316,71 @@ export const publishOrUpdateResult = async (req, res) => {
       const user = await User.findById(b.user);
       if (!user) continue;
 
+      const stakeAmt = Number(b.stake || 0);
+
       if (winner === "DRAW") {
-        const refund = b.stake || 0;
-        user.walletBalance += refund;
+        // refund stake
+        user.walletBalance += stakeAmt;
+        // 🔹 EXP FIX (DRAW): minus stake from exposure
+        user.exposure = Math.max(Number(user.exposure || 0) - stakeAmt, 0);
+
         b.status = "REFUNDED";
         b.winAmount = 0;
         refunds++;
+
         await user.save();
         await b.save();
+
         await Transaction.create({
           user: user._id,
           type: "REVERSAL",
-          amount: refund,
+          amount: stakeAmt,
           meta: {
             matchId: id,
-            matchName: matchTitle, // ✅ added
+            matchName: matchTitle,
             reason: "Match DRAW refund",
             betId: b._id,
           },
           balanceAfter: user.walletBalance,
         });
+
       } else {
         const betTeam = norm(b.team ?? b.side ?? "");
         if (betTeam && betTeam === norm(winner)) {
-          const credit = b.potentialWin || 0;
+          const credit = Number(b.potentialWin || 0);
           user.walletBalance += credit;
+          // 🔹 EXP FIX (WIN): minus stake from exposure
+          user.exposure = Math.max(Number(user.exposure || 0) - stakeAmt, 0);
+
           b.status = "WON";
           b.winAmount = credit;
           wins++;
+
           await user.save();
           await b.save();
+
           await Transaction.create({
             user: user._id,
             type: "BET_WIN",
             amount: credit,
             meta: {
               matchId: id,
-              matchName: matchTitle, // ✅ added
+              matchName: matchTitle,
               team: b.team,
               result: "WIN",
               betId: b._id,
             },
             balanceAfter: user.walletBalance,
           });
+
         } else {
+          // loss
           b.status = "LOST";
           b.winAmount = 0;
+          // 🔹 EXP FIX (LOSS): minus stake from exposure
+          user.exposure = Math.max(Number(user.exposure || 0) - stakeAmt, 0);
+
+          await user.save();
           losses++;
           await b.save();
         }
@@ -360,4 +402,3 @@ export const publishOrUpdateResult = async (req, res) => {
     });
   }
 };
-
