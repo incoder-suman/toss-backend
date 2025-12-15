@@ -305,6 +305,15 @@ export const publishOrUpdateResult = async (req, res) => {
     /* ----------------------------------------------------
        🏁 Apply new result and settle (also deduct EXP)
     ---------------------------------------------------- */
+
+    // 🚫 FIX: Cancelled match par result declare mat hone do
+if (match.status === "CANCELLED") {
+  return res.status(400).json({
+    message: "Cannot publish result for a cancelled match",
+  });
+}
+
+
     match.result = winner;
     match.status = "COMPLETED";
     await match.save();
